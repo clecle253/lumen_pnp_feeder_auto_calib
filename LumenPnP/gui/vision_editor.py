@@ -1,7 +1,7 @@
 import threading
 import time
-from javax.swing import JFrame, JPanel, JButton, JLabel, JList, JScrollPane, JSplitPane, JTextField, JCheckBox, JComboBox, DefaultListModel, BorderFactory, SwingConstants, ImageIcon, JOptionPane, JSlider, BoxLayout, Box
-from java.awt import BorderLayout, Dimension, Color, Image, Font, GridLayout, FlowLayout
+from javax.swing import JFrame, JPanel, JButton, JLabel, JList, JScrollPane, JSplitPane, JTextField, JCheckBox, JComboBox, DefaultListModel, BorderFactory, SwingConstants, ImageIcon, JOptionPane, JSlider, BoxLayout, Box, JToggleButton, ButtonGroup
+from java.awt import BorderLayout, Dimension, Color, Image, Font, GridLayout, FlowLayout, BasicStroke, RenderingHints
 from java.awt.event import ActionListener, MouseAdapter, WindowAdapter
 from javax.swing.event import ListSelectionListener, ChangeListener
 
@@ -24,6 +24,11 @@ class VisionEditor:
         # Click-to-Move State
         self.last_raw_w = 0
         self.last_raw_h = 0
+        
+        # Tool Mode: 'move' or 'measure'
+        self.tool_mode = 'move'
+        self.measure_p1 = None # (x, y) raw
+        self.measure_p2 = None # (x, y) raw
         
         # Original Camera State (for Restore)
         self.orig_cam_state = None
@@ -128,6 +133,32 @@ class VisionEditor:
         self.chk_binary = JCheckBox("Show Threshold (Debug)", False)
         cam_ctrl_panel.add(self.chk_live)
         cam_ctrl_panel.add(self.chk_binary)
+        
+        # Tool Toggles
+        self.btn_move = JToggleButton("Move", True)
+        self.btn_measure = JToggleButton("Measure", False)
+        
+        grp = ButtonGroup()
+        grp.add(self.btn_move)
+        grp.add(self.btn_measure)
+        
+        def on_tool_change(e):
+            if self.btn_move.isSelected():
+                self.tool_mode = 'move'
+                self.measure_p1 = None
+                self.measure_p2 = None
+            else:
+                self.tool_mode = 'measure'
+                self.measure_p1 = None
+                self.measure_p2 = None
+                
+        self.btn_move.addActionListener(on_tool_change)
+        self.btn_measure.addActionListener(on_tool_change)
+        
+        cam_ctrl_panel.add(Box.createHorizontalStrut(10))
+        cam_ctrl_panel.add(self.btn_move)
+        cam_ctrl_panel.add(self.btn_measure)
+        cam_ctrl_panel.add(Box.createHorizontalStrut(10))
         
         btn_capture = JButton("Force Capture", actionPerformed=lambda e: self.capture_frame())
         cam_ctrl_panel.add(btn_capture)
@@ -453,37 +484,129 @@ class VisionEditor:
             self.lbl_image.setIcon(icon)
             self.lbl_image.setText("")
             
+            # Draw Overlay (Measurement)
+            if self.tool_mode == 'measure' and (self.measure_p1 or self.measure_p2):
+                g = icon.getImage().getGraphics()
+                if not g: return # Can happen if image is not displayable yet?
+                
+                g.setColor(Color.RED)
+                # Scale logic again to draw on the SCALED image
+                # We need the scale factor used above.
+                # Re-calculate or execute on raw then scale? Scaling raw is better but we only have icon here.
+                # Actually, simple way: we have raw P1/P2. 
+                # We need to map RAW -> Displayed Icon Config.
+                
+                # Retrieve used scale from above (re-calc)
+                iw_raw = final_img.getWidth()
+                ih_raw = final_img.getHeight()
+                dw = icon.getIconWidth()
+                dh = icon.getIconHeight()
+                
+                sx = float(dw) / float(iw_raw)
+                sy = float(dh) / float(ih_raw)
+                
+                def to_screen(p):
+                    return (int(p[0] * sx), int(p[1] * sy))
+                
+                if self.measure_p1:
+                     s1 = to_screen(self.measure_p1)
+                     g.drawLine(s1[0]-5, s1[1], s1[0]+5, s1[1])
+                     g.drawLine(s1[0], s1[1]-5, s1[0], s1[1]+5)
+                     
+                if self.measure_p2:
+                     s2 = to_screen(self.measure_p2)
+                     g.setColor(Color.GREEN)
+                     g.drawLine(s2[0]-5, s2[1], s2[0]+5, s2[1])
+                     g.drawLine(s2[0], s2[1]-5, s2[0], s2[1]+5)
+                     
+                     # Line
+                     g.setColor(Color.YELLOW)
+                     g.drawLine(s1[0], s1[1], s2[0], s2[1])
+                     
+                     # Distance
+                     import math
+                     dx = self.measure_p1[0] - self.measure_p2[0]
+                     dy = self.measure_p1[1] - self.measure_p2[1]
+                     dist_px = math.sqrt(dx*dx + dy*dy)
+                     
+                     g.setColor(Color.WHITE)
+                     # g.setFont(Font("SansSerif", Font.BOLD, 14)) # Jython might fail setFont on Graphics sometimes?
+                     g.drawString("%.2f px" % dist_px, s2[0]+10, s2[1])
+                
+                g.dispose()
+                self.lbl_image.repaint()
+            
         except Exception as e:
             self.lbl_image.setText("Camera Error: " + str(e))
-    def on_camera_click(self, e):
-        """Handle click on camera feed to move machine (Relative Move)"""
-        if self.last_raw_w == 0 or self.last_raw_h == 0:
-            return
             
+    def on_camera_click(self, e):
+        """Handle click on camera feed"""
+        if self.last_raw_w == 0 or self.last_raw_h == 0: return
+
         # 1. Get Click Coordinates
         click_x = e.getX()
         click_y = e.getY()
         
-        # 2. Get Label Dimensions (The image is stretched to this)
+        # 2. Get Label Dimensions
         lbl_w = self.lbl_image.getWidth()
         lbl_h = self.lbl_image.getHeight()
         
         if lbl_w == 0 or lbl_h == 0: return
         
-        # 3. Calculate Center of Label
-        center_x = lbl_w / 2.0
-        center_y = lbl_h / 2.0
+        # 3. Calculate Scale/Offsets
+        # Used 'ImageIcon' centers the image in Label?
+        # Default JLabel is center aligned if text, but icon?
+        # We need to be careful. The ImageIcon is set on the Label.
+        # Usually centered by default if we used standard JLabel ctor or setHorizontalAlignment.
+        # Check defaults: initialized SwingConstants.CENTER.
         
-        # 4. Calculate Delta in Pixels (Scaled)
-        delta_x_scaled = click_x - center_x
-        delta_y_scaled = click_y - center_y
+        icon = self.lbl_image.getIcon()
+        if not icon: return
         
-        # 5. Un-Scale to Raw Pixels
-        scale_x = float(self.last_raw_w) / float(lbl_w)
-        scale_y = float(self.last_raw_h) / float(lbl_h)
+        icon_w = icon.getIconWidth()
+        icon_h = icon.getIconHeight()
         
-        delta_x_raw = delta_x_scaled * scale_x
-        delta_y_raw = delta_y_scaled * scale_y
+        off_x = (lbl_w - icon_w) / 2
+        off_y = (lbl_h - icon_h) / 2
+        
+        # Relative to Image
+        rel_x = click_x - off_x
+        rel_y = click_y - off_y
+        
+        if rel_x < 0 or rel_x >= icon_w or rel_y < 0 or rel_y >= icon_h:
+            return # Clicked outside
+            
+        # Un-Scale to Raw
+        scale_x = float(self.last_raw_w) / float(icon_w)
+        scale_y = float(self.last_raw_h) / float(icon_h)
+        
+        raw_x = rel_x * scale_x
+        raw_y = rel_y * scale_y
+        
+        if self.tool_mode == 'measure':
+             if self.measure_p1 and self.measure_p2:
+                 # Reset
+                 self.measure_p1 = (raw_x, raw_y)
+                 self.measure_p2 = None
+             elif not self.measure_p1:
+                 self.measure_p1 = (raw_x, raw_y)
+             else:
+                 self.measure_p2 = (raw_x, raw_y)
+             
+             # Force repaint (capture frame will see new points)
+             if not self.chk_live.isSelected():
+                 self.capture_frame()
+                 
+             return
+
+        # ---- MOVE MODE ----
+        
+        # 3. Calculate Center of Image (Raw)
+        center_raw_x = self.last_raw_w / 2.0
+        center_raw_y = self.last_raw_h / 2.0
+        
+        delta_raw_x = raw_x - center_raw_x
+        delta_raw_y = raw_y - center_raw_y
         
         # 6. Convert to Millimeters
         try:
@@ -491,30 +614,23 @@ class VisionEditor:
             cam = head.getDefaultCamera()
             upp = cam.getUnitsPerPixel()
             
-            # X Move: Right on Image (Positive Delta) = Positive X Machine? 
-            # Usually yes.
-            move_x = delta_x_raw * upp.getX()
+            # X Move
+            move_x = delta_raw_x * upp.getX()
             
-            # Y Move: Down on Image (Positive Delta) = Negative Y Machine?
-            # Standard OpenPnP: Top-Left origin image, Bottom-Left origin machine.
-            # So +Y image (down) = -Y machine (down)
-            move_y = delta_y_raw * upp.getY() * -1.0 
+            # Y Move: Top-Left Image -> Bottom-Left Machine
+            # Down on image (+Y) = Down on machine (-Y)
+            move_y = delta_raw_y * upp.getY() * -1.0 # Assuming standard OpenPnP setup
             
-            # 7. Execute Move
-            current_loc = cam.getLocation()
+            # Execute Move
             from org.openpnp.model import Location
-            
-            # Target is relative to current
-            new_x = current_loc.getX() + move_x
-            new_y = current_loc.getY() + move_y
-            
-            target = Location(current_loc.getUnits(), new_x, new_y, current_loc.getZ(), current_loc.getRotation())
+            loc = cam.getLocation()
+            new_loc = Location(loc.getUnits(), loc.getX() + move_x, loc.getY() + move_y, loc.getZ(), loc.getRotation())
             
             def move_task():
                 try:
                     speed = self.machine.getSpeed()
-                    cam.moveTo(target, speed)
-                    # self.lbl_info.setText("Moved: %.2f, %.2f" % (move_x, move_y))
+                    cam.moveTo(new_loc, speed)
+                    self.lbl_info.setText("Moved: %.2f, %.2f" % (move_x, move_y))
                 except Exception as ex:
                     self.lbl_info.setText("Move Error: " + str(ex))
             
