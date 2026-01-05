@@ -2,6 +2,15 @@
 
 Ce projet contient un script Python pour OpenPnP permettant de recalibrer automatiquement la position de tous les feeders (spécifiquement pensé pour les feeders Photon de LumenPnP).
 
+> [!CAUTION]
+> **PROJET EN COURS DE DÉVELOPPEMENT (WIP) - À UTILISER À VOS RISQUES ET PÉRILS**
+>
+> Ce projet est actuellement **dédié à ma configuration spécifique**. Il n'est pas encore généralisé et contient des valeurs en dur ou des comportements adaptés à ma machine.
+>
+> L'outil est amené à évoluer grandement pour devenir généraliste, autonome et sans configuration manuelle à l'avenir.
+>
+> **Licence** : Vous êtes libre de copier, modifier et distribuer ce code gratuitement et à volonté. C'est de l'Open Source. Cependant, aucune garantie n'est fournie quant à son fonctionnement sur votre machine.
+
 ## Installation
 
 1.  Assurez-vous qu'OpenPnP est installé et configuré.
