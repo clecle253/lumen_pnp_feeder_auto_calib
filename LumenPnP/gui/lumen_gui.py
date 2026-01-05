@@ -956,7 +956,7 @@ class LumenPnPGUI:
 
     def _create_calibration_panel(self):
         from javax.swing import JPanel, JLabel, JButton, BorderFactory, JSplitPane, Box, BoxLayout, JScrollPane, SwingConstants
-        from java.awt import BorderLayout, GridLayout, Dimension, Color, Component, Font, FlowLayout, Insets
+        from java.awt import BorderLayout, GridLayout, Dimension, Color, Component, Font, FlowLayout
         from java.awt.event import MouseAdapter
         
         panel = JPanel(BorderLayout())
@@ -991,7 +991,6 @@ class LumenPnPGUI:
         def create_slot_widget(slot_id):
             p = JPanel(BorderLayout())
             p.setBorder(BorderFactory.createLineBorder(Color.LIGHT_GRAY))
-            # ... (truncated for brevity in actual tool call if needed, but here replacing logic)
             p.setBackground(Color(240, 240, 240)) # Default Gray
             p.setPreferredSize(Dimension(150, 24)) # Slightly Taller for buttons
             
@@ -1012,7 +1011,7 @@ class LumenPnPGUI:
             # Helper for mini button
             def make_mini_btn(txt, tip, bg):
                 b = JButton(txt)
-                b.setMargin(Insets(0,2,0,2))
+                b.setMargin(swing.Insets(0,2,0,2))
                 b.setFont(Font("SansSerif", Font.BOLD, 9))
                 b.setPreferredSize(Dimension(20, 22))
                 b.setToolTipText(tip)
