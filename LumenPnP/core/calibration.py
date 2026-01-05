@@ -21,6 +21,9 @@ class PocketCalibrator:
         Calibrate the pocket position for a single feeder.
         Updates feeder.partOffset.
         """
+        cam = None
+        orig_brightness = -1
+        
         try:
             if callback: callback("Calibrating pocket for " + feeder.getName())
             
@@ -28,7 +31,7 @@ class PocketCalibrator:
             head = self.machine.getDefaultHead()
             cam = head.getDefaultCamera()
             orig_brightness = self._get_cam_brightness(cam)
-
+            # if callback: callback("DEBUG: Captured Brightness: " + str(orig_brightness))
             
             # 1. Get Part info
             part = feeder.getPart()
@@ -63,8 +66,6 @@ class PocketCalibrator:
                 search_loc = search_loc.add(current_offset)
                 
             # Move Camera
-            head = self.machine.getDefaultHead()
-            cam = head.getDefaultCamera()
             if not cam:
                 if callback: callback("Error: No camera found.")
                 return False
@@ -81,6 +82,7 @@ class PocketCalibrator:
             # This is critical for White vs Black tape
             cam_brightness = int(getattr(profile, 'camera_brightness', -1))
             if cam_brightness >= 0:
+                if callback: callback("Applying Profile Brightness: " + str(cam_brightness))
                 self._apply_cam_setting(cam, cam_brightness)
                 time.sleep(0.2) # Wait for exposure to settle
                 
@@ -142,7 +144,6 @@ class PocketCalibrator:
             
             return True
 
-            return True
         except Exception as e:
             if callback: 
                 callback("Pocket Calibration Error: " + str(e))
@@ -151,8 +152,10 @@ class PocketCalibrator:
             return False
         finally:
              # Restore State
-             if 'orig_brightness' in locals() and orig_brightness >= 0 and 'cam' in locals():
+             if cam and orig_brightness >= 0:
+                 # if callback: callback("Restoring Brightness: " + str(orig_brightness))
                  self._apply_cam_setting(cam, orig_brightness)
+
 
 
     def _apply_cam_setting(self, cam, brightness):
