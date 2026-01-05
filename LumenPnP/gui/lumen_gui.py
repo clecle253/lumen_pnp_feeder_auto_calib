@@ -1049,6 +1049,11 @@ class LumenPnPGUI:
         self.btn_goto_feeder.setEnabled(False)
         action_panel.add(self.btn_goto_feeder)
         
+        self.btn_goto_pocket = make_button("Go to Pocket", lambda e: self._move_to_selected_pocket())
+        self.btn_goto_pocket.setEnabled(False)
+        action_panel.add(self.btn_goto_pocket)
+        
+        
         action_panel.add(Box.createVerticalGlue())
         
         self.stop_btn = make_button("STOP", lambda e: self._stop_calibration(), Color(255, 100, 100))
@@ -1089,6 +1094,7 @@ class LumenPnPGUI:
         self.btn_cal_pocket.setEnabled(True)
 
         self.btn_goto_feeder.setEnabled(True)
+        self.btn_goto_pocket.setEnabled(True)
             
         if hasattr(self, 'btn_cal_pocket'):
             self.btn_cal_pocket.setEnabled(True)
@@ -1136,57 +1142,66 @@ class LumenPnPGUI:
         t.start()
 
     def _move_to_selected_feeder(self):
-        """Move camera to the selected feeder location"""
-        if not hasattr(self, 'selected_feeder') or not self.selected_feeder:
-            return
-
+        """Move camera to the selected feeder's Slot Location (Base)"""
         try:
+            if not hasattr(self, 'selected_feeder') or not self.selected_feeder:
+                return
+                
             feeder = self.selected_feeder
-            name = feeder.getName()
-            self.log("Moving to feeder: " + str(name))
-            
-            # Get Location (check Slot first)
             location = feeder.getLocation()
+            
+            # Use Slot location if available (Base)
             if hasattr(feeder, 'getSlot') and feeder.getSlot():
                  location = feeder.getSlot().getLocation()
             
+            self._move_camera_to(location)
+            
+        except Exception as e:
+            self.log("Error moving to feeder: " + str(e))
+
+    def _move_to_selected_pocket(self):
+        """Move camera to the selected feeder's Pocket Location (Base + Offset)"""
+        try:
+            if not hasattr(self, 'selected_feeder') or not self.selected_feeder:
+                return
+                
+            feeder = self.selected_feeder
+            location = feeder.getLocation() # Usually Base
+            
+            # Add Offset if exists
+            offset = feeder.getOffset()
+            if offset:
+                location = location.add(offset)
+            
+            self._move_camera_to(location)
+            
+        except Exception as e:
+            self.log("Error moving to pocket: " + str(e))
+
+    def _move_camera_to(self, location):
+        """Helper to move camera to a location with Safe Z"""
+        try:
             head = self.machine.getDefaultHead()
             
             # 1. Safe Z Move first
             head.moveToSafeZ()
             
-            # 2. Get Safe Z from Camera (Head doesn't have getLocation)
+            # 2. Get Safe Z from Camera
             safe_z = 0.0
             camera = head.getDefaultCamera()
             if camera:
                 safe_z = camera.getLocation().getZ()
             
-            # 3. Move to X/Y (keeping Safe Z)
+            # 3. Move to target X/Y with Safe Z
             from org.openpnp.model import Location
             target_loc = Location(location.getUnits(), location.getX(), location.getY(), safe_z, location.getRotation())
             
-            # 3. Move using Camera directly (HeadMountable)
-            # Since head.moveTo wants a HeadMountable, calling it on the camera is the direct way.
-            # camera.moveTo(Location, speed) or camera.moveTo(Location)
-            
-            # Using machine.getSpeed() to respect the UI slider/global setting
             speed = self.machine.getSpeed()
-            self.log("Attempting camera.moveTo(target_loc, speed=" + str(speed) + ")...")
+            self.log("Moving to: %.2f, %.2f" % (target_loc.getX(), target_loc.getY()))
             camera.moveTo(target_loc, speed)
             
-            self.log("Moved to X=" + str(target_loc.getX()) + ", Y=" + str(target_loc.getY()))
-            
         except Exception as e:
-            self.log("Error moving to feeder: " + str(e))
-            self.log("--- DEBUG HEAD METHODS ---")
-            try:
-                self.log(str(dir(self.machine.getDefaultHead())))
-            except:
-                pass
-            self.log("--------------------------")
-            
-        except Exception as e:
-            self.log("Error moving to feeder: " + str(e))
+            self.log("Move Error: " + str(e))
 
     def _start_general_calibration(self):
         """Start the calibration in a background thread"""
