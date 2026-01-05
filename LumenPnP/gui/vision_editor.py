@@ -456,7 +456,10 @@ class VisionEditor:
             
             # Capture
             img = cam.capture()
-            
+            if not img:
+                 self.lbl_image.setText("Camera Capture Failed (None)")
+                 return
+
             # Process if profile selected
             if self.current_profile:
                 # engine returns found, center, res_img (color), stats, res_img_bin (annotated)
@@ -475,37 +478,37 @@ class VisionEditor:
             else:
                 final_img = img
             
+            if not final_img:
+                 self.lbl_image.setText("Processing Failed (None)")
+                 return
+
             # Update State
             self.last_raw_w = final_img.getWidth()
             self.last_raw_h = final_img.getHeight()
             
             # Display
-            # Display Scaled
-            # Display
-            # Display Scaled
             width = self.lbl_image.getWidth()
             height = self.lbl_image.getHeight()
             
             if width > 0 and height > 0:
-                 # Maintain aspect ratio logic if desired, but here we fill the label or fit?
-                 # Existing code seemed to imply fill or just scaled instance.
-                 # Let's use a BufferedImage for thread-safe drawing
+                 # 1. Scale Image using getScaledInstance (Fast & Reliable)
+                 # Maintain full fill of label
+                 scaled = final_img.getScaledInstance(width, height, Image.SCALE_FAST)
                  
-                 # 1. Create BufferedImage
+                 # 2. Draw to BufferedImage (to allow safe overlay drawing)
                  bimg = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
                  g = bimg.createGraphics()
-                 g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
                  
-                 # 2. Draw Scaled Image
-                 g.drawImage(final_img, 0, 0, width, height, None)
+                 # Draw the scaled image onto the buffer
+                 g.drawImage(scaled, 0, 0, None)
                  
                  # 3. Draw Overlay (Measurement)
                  if self.tool_mode == 'measure' and (self.measure_p1 or self.measure_p2):
                     g.setColor(Color.RED)
                     g.setStroke(BasicStroke(2))
                     
-                    iw_raw = final_img.getWidth()
-                    ih_raw = final_img.getHeight()
+                    iw_raw = self.last_raw_w
+                    ih_raw = self.last_raw_h
                     
                     sx = float(width) / float(iw_raw)
                     sy = float(height) / float(ih_raw)
@@ -549,7 +552,6 @@ class VisionEditor:
                          self.lbl_measure_val.setText("Dist: -")
 
                  elif self.tool_mode != 'measure':
-                     # Clear label if not in measure mode (redundant if handled in toggle, but safe)
                      self.lbl_measure_val.setText("Dist: -")
                      
                  g.dispose()
