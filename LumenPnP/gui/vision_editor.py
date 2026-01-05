@@ -444,50 +444,45 @@ class VisionEditor:
         t.start()
 
     def live_loop(self):
-        # DEBUG: Check if thread starts
-        print("DEBUG: Thread Started")
-        def update_start(): self.lbl_image.setText("DEBUG: Thread Started")
-        try: SwingUtilities.invokeLater(update_start)
-        except: pass
-        
         while self.running and self.window.isVisible():
             try:
                 if self.chk_live.isSelected():
-                    # DEBUG: capturing
-                    # def update_cap(): self.lbl_image.setText("DEBUG: Capturing...")
-                    # SwingUtilities.invokeLater(update_cap)
                     self.capture_frame()
             except Exception as e:
                 print("Live Loop Error: " + str(e))
-                def update_err(): self.lbl_image.setText("Loop Error: " + str(e))
-                try: SwingUtilities.invokeLater(update_err)
-                except: pass
             time.sleep(0.2) # 5 FPS
 
     def capture_frame(self):
         try:
             head = self.machine.getDefaultHead()
             if not head:
-                 self.lbl_image.setText("No Head Found")
+                 SwingUtilities.invokeLater(lambda: self.lbl_image.setText("No Head Found"))
                  return
                  
             cam = head.getDefaultCamera()
             if not cam:
-                 self.lbl_image.setText("No Camera Found on Head")
+                 SwingUtilities.invokeLater(lambda: self.lbl_image.setText("No Camera Found on Head"))
                  return
             
-            # Capture
+            # --- 1. Background Work (Capture & Process) ---
             try:
                 img = cam.capture()
             except Exception as e:
-                self.lbl_image.setText("Capture Exception: " + str(e))
+                SwingUtilities.invokeLater(lambda: self.lbl_image.setText("Capture Exception: " + str(e)))
                 return
                 
             if not img:
-                 self.lbl_image.setText("Camera Capture Failed (None)")
+                 SwingUtilities.invokeLater(lambda: self.lbl_image.setText("Camera Capture Failed (None)"))
                  return
 
+            # Prepare UI updates
+            ui_info_text = None
+            ui_dist_text = None
+            ui_icon = None
+            ui_err_text = None
+            
             # Process if profile selected
+            final_img = img
             if self.current_profile:
                 try:
                     # engine returns found, center, res_img (color), stats, res_img_bin (annotated)
@@ -499,40 +494,37 @@ class VisionEditor:
                         final_img = res_img
                     
                     if found and center:
-                         self.lbl_info.setText("FOUND: X=%.2f Y=%.2f Area=%d" % (center.x, center.y, stats.get('area', 0)))
+                         ui_info_text = "FOUND: X=%.2f Y=%.2f Area=%d" % (center.x, center.y, stats.get('area', 0))
                     else:
-                         self.lbl_info.setText("Not Found")
+                         ui_info_text = "Not Found"
                 except Exception as e:
-                    self.lbl_image.setText("Vision Process Error: " + str(e))
+                    SwingUtilities.invokeLater(lambda: self.lbl_image.setText("Vision Process Error: " + str(e)))
                     return
-            else:
-                final_img = img
             
             if not final_img:
-                 self.lbl_image.setText("Processing Failed (None)")
+                 SwingUtilities.invokeLater(lambda: self.lbl_image.setText("Processing Failed (None)"))
                  return
 
-            # Update State
+            # Update State (Thread safe: just writing ints)
             self.last_raw_w = final_img.getWidth()
             self.last_raw_h = final_img.getHeight()
             
-            # Display
+            # Display Preparation
             width = self.lbl_image.getWidth()
             height = self.lbl_image.getHeight()
             
             if width > 0 and height > 0:
                  try:
-                     # 1. Scale Image
+                     # Scale
                      scaled = final_img.getScaledInstance(width, height, Image.SCALE_FAST)
                      
-                     # 2. Draw to BufferedImage
+                     # Draw Overlay
                      bimg = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
                      g = bimg.createGraphics()
                      
                      try:
                          g.drawImage(scaled, 0, 0, None)
                          
-                         # 3. Draw Overlay
                          if self.tool_mode == 'measure' and (self.measure_p1 or self.measure_p2):
                             g.setColor(Color.RED)
                             g.setStroke(BasicStroke(2))
@@ -572,27 +564,44 @@ class VisionEditor:
                                      g.setColor(Color.WHITE)
                                      g.setFont(Font("SansSerif", Font.BOLD, 14))
                                      g.drawString("%.2f px" % dist_px, s2[0]+15, s2[1])
-                                     self.lbl_measure_val.setText("Dist: %.2f px" % dist_px)
+                                     ui_dist_text = "Dist: %.2f px" % dist_px
                                 else:
-                                     self.lbl_measure_val.setText("Dist: -")
+                                     ui_dist_text = "Dist: -"
                             elif self.tool_mode != 'measure':
-                                 self.lbl_measure_val.setText("Dist: -")
+                                 ui_dist_text = "Dist: -"
                      finally:
                          g.dispose()
                      
-                     icon = ImageIcon(bimg)
+                     ui_icon = ImageIcon(bimg)
                  except Exception as e:
-                     self.lbl_image.setText("Draw Error: " + str(e))
-                     return
+                     ui_err_text = "Draw Error: " + str(e)
             else:
-                 icon = ImageIcon(final_img)
-                 
-            self.lbl_image.setIcon(icon)
-            self.lbl_image.setText("")
+                 # Fallback
+                 ui_icon = ImageIcon(final_img)
+            
+            # --- 2. Foreground Work (UI Update) ---
+            def do_ui_update():
+                if ui_err_text:
+                    self.lbl_image.setText(ui_err_text)
+                    return
+                
+                if ui_icon:
+                    self.lbl_image.setIcon(ui_icon)
+                    self.lbl_image.setText("")
+                
+                if ui_info_text:
+                    self.lbl_info.setText(ui_info_text)
+                    
+                if ui_dist_text and self.tool_mode == 'measure':
+                    self.lbl_measure_val.setText(ui_dist_text)
+                elif self.tool_mode != 'measure':
+                    self.lbl_measure_val.setText("Dist: -")
+
+            SwingUtilities.invokeLater(do_ui_update)
             
         except Exception as e:
-            self.lbl_image.setText("Camera Error: " + str(e))
             print("Capture Frame Error: " + str(e))
+            SwingUtilities.invokeLater(lambda: self.lbl_image.setText("Global Error: " + str(e)))
             
     def on_camera_click(self, e):
         """Handle click on camera feed"""
