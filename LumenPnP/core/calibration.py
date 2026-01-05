@@ -154,6 +154,10 @@ class SlotCalibrator:
         """
         log_callback("--- Starting Slot Calibration ---")
         
+        # Instantiate PocketCalibrator
+        pocket_calibrator = PocketCalibrator(self.machine)
+        
+        
         # 1. Validate Vision Setup
         try:
             fiducial_part = self._get_fiducial_part(log_callback)
@@ -235,7 +239,22 @@ class SlotCalibrator:
                         feeder.setLocation(new_base_loc)
                         log_callback("  UPDATED Feeder Location.")
                         
+                        log_callback("  UPDATED Feeder Location.")
+                        
                     updated_count += 1
+                    
+                    # 3. Pocket Calibration (Auto)
+                    # Only if Slot was found and updated? Yes, otherwise we might be searching in the void.
+                    log_callback("  > Attempting Pocket Calibration...")
+                    # We pass a silent callback for non-critical failures, or just reuse log?
+                    # Reuse log but maybe prefix?
+                    pocket_success = pocket_calibrator.calibrate_feeder(feeder, callback=lambda m: log_callback("    [Pocket] " + m))
+                    if pocket_success:
+                        updated_count += 1 # Count pockets too? Or track separately?
+                        log_callback("  > Pocket Calibrated.")
+                    else:
+                        log_callback("  > Pocket Calibration Skipped/Failed (See details above).")
+                        
                 else:
                     log_callback("  FAILED to locate fiducial.")
                     
