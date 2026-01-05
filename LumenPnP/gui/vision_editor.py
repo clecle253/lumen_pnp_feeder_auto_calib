@@ -26,8 +26,9 @@ class VisionEditor:
         self.last_raw_h = 0
         
         # Original Camera State (for Restore)
-        self.orig_cam_brightness = -1
+        self.orig_cam_state = None
         self._capture_original_cam_state()
+
         
         self.window = JFrame("LumenPnP Custom Vision Editor")
         # Maximize Window
@@ -46,20 +47,25 @@ class VisionEditor:
         try:
             head = self.machine.getDefaultHead()
             cam = head.getDefaultCamera()
+            prop = None
             if hasattr(cam, "getBrightness"):
                 prop = cam.getBrightness()
-                if hasattr(prop, "getValue"):
-                     self.orig_cam_brightness = int(prop.getValue())
             elif hasattr(cam, "getDevice"):
                 dev = cam.getDevice()
                 if hasattr(dev, "getBrightness"):
                      prop = dev.getBrightness()
-                     if hasattr(prop, "getValue"):
-                        self.orig_cam_brightness = int(prop.getValue())
+            
+            if prop:
+                 val = 0
+                 is_auto = False
+                 if hasattr(prop, "getValue"): val = int(prop.getValue())
+                 if hasattr(prop, "isAuto"): is_auto = prop.isAuto()
+                 self.orig_cam_state = {'value': val, 'auto': is_auto}
         except:
              pass
 
     def setup_ui(self):
+
         # 1. Left Panel: Profile List
         left_panel = JPanel(BorderLayout())
         left_panel.setPreferredSize(Dimension(200, 0))
@@ -514,21 +520,28 @@ class VisionEditor:
         self.running = False
         
         # Restore Camera State
-        if self.orig_cam_brightness >= 0:
+        if self.orig_cam_state:
             try:
                 head = self.machine.getDefaultHead()
                 cam = head.getDefaultCamera()
                 
-                def set_prop(prop, val):
-                     if hasattr(prop, "setValue"):
-                        prop.setValue(int(val))
+                val = int(self.orig_cam_state.get('value', 0))
+                is_auto = self.orig_cam_state.get('auto', False)
+                
+                def set_prop(prop):
+                    if hasattr(prop, "setAuto"):
+                        try: prop.setAuto(is_auto)
+                        except: pass
+                    
+                    if not is_auto and hasattr(prop, "setValue"):
+                        prop.setValue(val)
                         
                 if hasattr(cam, "getBrightness"):
-                    set_prop(cam.getBrightness(), self.orig_cam_brightness)
+                    set_prop(cam.getBrightness())
                 elif hasattr(cam, "getDevice"):
                      dev = cam.getDevice()
                      if hasattr(dev, "getBrightness"):
-                         set_prop(dev.getBrightness(), self.orig_cam_brightness)
+                         set_prop(dev.getBrightness())
             except:
                 pass
                 

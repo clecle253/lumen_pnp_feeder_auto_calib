@@ -30,7 +30,8 @@ class PocketCalibrator:
             # Capture Original State (Scope: Single Feeder)
             head = self.machine.getDefaultHead()
             cam = head.getDefaultCamera()
-            orig_brightness = self._get_cam_brightness(cam)
+            orig_state = self._get_cam_state(cam)
+
             # if callback: callback("DEBUG: Captured Brightness: " + str(orig_brightness))
             
             # 1. Get Part info
@@ -83,8 +84,10 @@ class PocketCalibrator:
             cam_brightness = int(getattr(profile, 'camera_brightness', -1))
             if cam_brightness >= 0:
                 if callback: callback("Applying Profile Brightness: " + str(cam_brightness))
-                self._apply_cam_setting(cam, cam_brightness)
+                # When applying specific value, we force Auto to False
+                self._apply_cam_setting(cam, {'value': cam_brightness, 'auto': False})
                 time.sleep(0.2) # Wait for exposure to settle
+
                 
             img = cam.capture()
             # process_image returns: found, center, res_img, stats, res_img_bin
@@ -152,46 +155,56 @@ class PocketCalibrator:
             return False
         finally:
              # Restore State
-             if cam and orig_brightness >= 0:
-                 # if callback: callback("Restoring Brightness: " + str(orig_brightness))
-                 self._apply_cam_setting(cam, orig_brightness)
+             if cam and orig_state:
+                 self._apply_cam_setting(cam, orig_state)
 
 
-
-    def _apply_cam_setting(self, cam, brightness):
+    def _apply_cam_setting(self, cam, state):
+        # state is dict {value, auto}
         try:
-            self._set_prop(cam, brightness)
+            val = int(state.get('value', 0))
+            is_auto = state.get('auto', False)
+            
+            def set_prop(prop):
+                if hasattr(prop, "setAuto"):
+                    try: prop.setAuto(is_auto)
+                    except: pass
+                
+                # Only set value if not auto (or if API requires it, but usually Auto overrides)
+                # But if we are restoring Manual mode, we MUST set value.
+                if not is_auto and hasattr(prop, "setValue"):
+                    prop.setValue(val)
+                    
+            if hasattr(cam, "getBrightness"):
+                set_prop(cam.getBrightness())
+            elif hasattr(cam, "getDevice"):
+                dev = cam.getDevice()
+                if hasattr(dev, "getBrightness"):
+                     set_prop(dev.getBrightness())
         except:
              pass
 
-    def _get_cam_brightness(self, cam):
+    def _get_cam_state(self, cam):
         try:
+             prop = None
              if hasattr(cam, "getBrightness"):
                 prop = cam.getBrightness()
-                if hasattr(prop, "getValue"): return int(prop.getValue())
              elif hasattr(cam, "getDevice"):
                 dev = cam.getDevice()
                 if hasattr(dev, "getBrightness"):
                     prop = dev.getBrightness()
-                    if hasattr(prop, "getValue"): return int(prop.getValue())
+            
+             if prop:
+                 val = 0
+                 is_auto = False
+                 if hasattr(prop, "getValue"): val = int(prop.getValue())
+                 if hasattr(prop, "isAuto"): is_auto = prop.isAuto()
+                 return {'value': val, 'auto': is_auto}
+                 
         except:
-            return -1
-        return -1
+            return None
+        return None
 
-    def _set_prop(self, cam, value):
-        def set_p(prop, v):
-            if hasattr(prop, "setAuto"):
-                try: prop.setAuto(False)
-                except: pass
-            if hasattr(prop, "setValue"):
-                prop.setValue(int(v))
-        
-        if hasattr(cam, "getBrightness"):
-            set_p(cam.getBrightness(), value)
-        elif hasattr(cam, "getDevice"):
-            dev = cam.getDevice()
-            if hasattr(dev, "getBrightness"):
-                 set_p(dev.getBrightness(), value)
 
 class SlotCalibrator:
     FIDUCIAL_PART_NAME = "Fiducial-1mm"
@@ -229,20 +242,16 @@ class SlotCalibrator:
             log_callback("CRITICAL: Vision Part setup failed: " + str(e))
             return
         
+        
         # Capture Global State (Scope: Full Calibration Run)
-        global_orig_brightness = -1
+        global_orig_state = None
         try:
             head = self.machine.getDefaultHead()
             cam = head.getDefaultCamera()
-            # Reuse helper if possible or duplicate? Accessing helper from instance
-            # PocketCalibrator has the helper methods now. 
-            # Let's verify we can access them or copy them. 
-            # Simpler to rely on pocket_calibrator's instance methods if they were public/static, 
-            # but they are instance private-ish.
-            # I will just use pocket_calibrator's helper since we have the instance.
-            global_orig_brightness = pocket_calibrator._get_cam_brightness(cam)
+            global_orig_state = pocket_calibrator._get_cam_state(cam)
         except:
             pass
+
             
         # 2. Sort Feeders
         try:
@@ -350,13 +359,14 @@ class SlotCalibrator:
             
         # Restore Global State
         try:
-            if global_orig_brightness >= 0:
+            if global_orig_state:
                 head = self.machine.getDefaultHead()
                 cam = head.getDefaultCamera()
-                pocket_calibrator._apply_cam_setting(cam, global_orig_brightness)
-                log_callback("Restored camera brightness.")
+                pocket_calibrator._apply_cam_setting(cam, global_orig_state)
+                log_callback("Restored camera state.")
         except:
             pass
+
 
     def _get_fiducial_part(self, log_fn):
         config = Configuration.get()
