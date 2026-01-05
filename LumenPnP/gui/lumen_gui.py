@@ -956,7 +956,7 @@ class LumenPnPGUI:
 
     def _create_calibration_panel(self):
         from javax.swing import JPanel, JLabel, JButton, BorderFactory, JSplitPane, Box, BoxLayout, JScrollPane, SwingConstants
-        from java.awt import BorderLayout, GridLayout, Dimension, Color, Component, Font
+        from java.awt import BorderLayout, GridLayout, Dimension, Color, Component, Font, FlowLayout
         from java.awt.event import MouseAdapter
         
         panel = JPanel(BorderLayout())
