@@ -2,6 +2,7 @@ import threading
 import time
 from javax.swing import JFrame, JPanel, JButton, JLabel, JList, JScrollPane, JSplitPane, JTextField, JCheckBox, JComboBox, DefaultListModel, BorderFactory, SwingConstants, ImageIcon, JOptionPane, JSlider, BoxLayout, Box, JToggleButton, ButtonGroup
 from java.awt import BorderLayout, Dimension, Color, Image, Font, GridLayout, FlowLayout, BasicStroke, RenderingHints
+from java.awt.image import BufferedImage
 from java.awt.event import ActionListener, MouseAdapter, WindowAdapter
 from javax.swing.event import ListSelectionListener, ChangeListener
 
@@ -147,17 +148,27 @@ class VisionEditor:
                 self.tool_mode = 'move'
                 self.measure_p1 = None
                 self.measure_p2 = None
+                self.lbl_measure_val.setText("Dist: -")
             else:
                 self.tool_mode = 'measure'
                 self.measure_p1 = None
                 self.measure_p2 = None
+                self.lbl_measure_val.setText("Dist: -")
                 
+        self.btn_move.addActionListener(on_tool_change)
+        self.btn_measure.addActionListener(on_tool_change)
+        
         self.btn_move.addActionListener(on_tool_change)
         self.btn_measure.addActionListener(on_tool_change)
         
         cam_ctrl_panel.add(Box.createHorizontalStrut(10))
         cam_ctrl_panel.add(self.btn_move)
         cam_ctrl_panel.add(self.btn_measure)
+        
+        self.lbl_measure_val = JLabel("  Dist: -  ")
+        self.lbl_measure_val.setFont(Font("Monospaced", Font.BOLD, 12))
+        cam_ctrl_panel.add(self.lbl_measure_val)
+        
         cam_ctrl_panel.add(Box.createHorizontalStrut(10))
         
         btn_capture = JButton("Force Capture", actionPerformed=lambda e: self.capture_frame())
@@ -470,71 +481,86 @@ class VisionEditor:
             
             # Display
             # Display Scaled
+            # Display
+            # Display Scaled
             width = self.lbl_image.getWidth()
             height = self.lbl_image.getHeight()
+            
             if width > 0 and height > 0:
-                 # Maintain aspect ratio
-                 # iw, ih = final_img.getWidth(), final_img.getHeight()
-                 # scale = min(width/iw, height/ih)
-                 scaled = final_img.getScaledInstance(width, height, Image.SCALE_FAST)
-                 icon = ImageIcon(scaled)
+                 # Maintain aspect ratio logic if desired, but here we fill the label or fit?
+                 # Existing code seemed to imply fill or just scaled instance.
+                 # Let's use a BufferedImage for thread-safe drawing
+                 
+                 # 1. Create BufferedImage
+                 bimg = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
+                 g = bimg.createGraphics()
+                 g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
+                 
+                 # 2. Draw Scaled Image
+                 g.drawImage(final_img, 0, 0, width, height, None)
+                 
+                 # 3. Draw Overlay (Measurement)
+                 if self.tool_mode == 'measure' and (self.measure_p1 or self.measure_p2):
+                    g.setColor(Color.RED)
+                    g.setStroke(BasicStroke(2))
+                    
+                    iw_raw = final_img.getWidth()
+                    ih_raw = final_img.getHeight()
+                    
+                    sx = float(width) / float(iw_raw)
+                    sy = float(height) / float(ih_raw)
+                    
+                    def to_screen(p):
+                        return (int(p[0] * sx), int(p[1] * sy))
+                    
+                    def draw_cross(p, color):
+                         s = to_screen(p)
+                         g.setColor(color)
+                         sz = 10
+                         g.drawLine(s[0]-sz, s[1], s[0]+sz, s[1])
+                         g.drawLine(s[0], s[1]-sz, s[0], s[1]+sz)
+                         return s
+                    
+                    s1 = None
+                    if self.measure_p1:
+                         s1 = draw_cross(self.measure_p1, Color.RED)
+                         
+                    if self.measure_p2:
+                         s2 = draw_cross(self.measure_p2, Color.GREEN)
+                         
+                         # Line
+                         g.setColor(Color.YELLOW)
+                         g.drawLine(s1[0], s1[1], s2[0], s2[1])
+                         
+                         # Distance
+                         import math
+                         dx = self.measure_p1[0] - self.measure_p2[0]
+                         dy = self.measure_p1[1] - self.measure_p2[1]
+                         dist_px = math.sqrt(dx*dx + dy*dy)
+                         
+                         # Draw Text on Image
+                         g.setColor(Color.WHITE)
+                         g.setFont(Font("SansSerif", Font.BOLD, 14))
+                         g.drawString("%.2f px" % dist_px, s2[0]+15, s2[1])
+                         
+                         # Update UI Label
+                         self.lbl_measure_val.setText("Dist: %.2f px" % dist_px)
+                    else:
+                         self.lbl_measure_val.setText("Dist: -")
+
+                 elif self.tool_mode != 'measure':
+                     # Clear label if not in measure mode (redundant if handled in toggle, but safe)
+                     self.lbl_measure_val.setText("Dist: -")
+                     
+                 g.dispose()
+                 icon = ImageIcon(bimg)
+                 
             else:
+                 # Fallback for 0 size
                  icon = ImageIcon(final_img)
                  
             self.lbl_image.setIcon(icon)
             self.lbl_image.setText("")
-            
-            # Draw Overlay (Measurement)
-            if self.tool_mode == 'measure' and (self.measure_p1 or self.measure_p2):
-                g = icon.getImage().getGraphics()
-                if not g: return # Can happen if image is not displayable yet?
-                
-                g.setColor(Color.RED)
-                # Scale logic again to draw on the SCALED image
-                # We need the scale factor used above.
-                # Re-calculate or execute on raw then scale? Scaling raw is better but we only have icon here.
-                # Actually, simple way: we have raw P1/P2. 
-                # We need to map RAW -> Displayed Icon Config.
-                
-                # Retrieve used scale from above (re-calc)
-                iw_raw = final_img.getWidth()
-                ih_raw = final_img.getHeight()
-                dw = icon.getIconWidth()
-                dh = icon.getIconHeight()
-                
-                sx = float(dw) / float(iw_raw)
-                sy = float(dh) / float(ih_raw)
-                
-                def to_screen(p):
-                    return (int(p[0] * sx), int(p[1] * sy))
-                
-                if self.measure_p1:
-                     s1 = to_screen(self.measure_p1)
-                     g.drawLine(s1[0]-5, s1[1], s1[0]+5, s1[1])
-                     g.drawLine(s1[0], s1[1]-5, s1[0], s1[1]+5)
-                     
-                if self.measure_p2:
-                     s2 = to_screen(self.measure_p2)
-                     g.setColor(Color.GREEN)
-                     g.drawLine(s2[0]-5, s2[1], s2[0]+5, s2[1])
-                     g.drawLine(s2[0], s2[1]-5, s2[0], s2[1]+5)
-                     
-                     # Line
-                     g.setColor(Color.YELLOW)
-                     g.drawLine(s1[0], s1[1], s2[0], s2[1])
-                     
-                     # Distance
-                     import math
-                     dx = self.measure_p1[0] - self.measure_p2[0]
-                     dy = self.measure_p1[1] - self.measure_p2[1]
-                     dist_px = math.sqrt(dx*dx + dy*dy)
-                     
-                     g.setColor(Color.WHITE)
-                     # g.setFont(Font("SansSerif", Font.BOLD, 14)) # Jython might fail setFont on Graphics sometimes?
-                     g.drawString("%.2f px" % dist_px, s2[0]+10, s2[1])
-                
-                g.dispose()
-                self.lbl_image.repaint()
             
         except Exception as e:
             self.lbl_image.setText("Camera Error: " + str(e))
