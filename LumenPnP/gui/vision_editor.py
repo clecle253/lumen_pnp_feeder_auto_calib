@@ -515,15 +515,14 @@ class VisionEditor:
             
             if width > 0 and height > 0:
                  try:
-                     # Scale
-                     scaled = final_img.getScaledInstance(width, height, Image.SCALE_FAST)
-                     
-                     # Draw Overlay
+                     # Scale & Draw directly to BufferedImage (Sync)
                      bimg = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
                      g = bimg.createGraphics()
+                     g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
                      
                      try:
-                         g.drawImage(scaled, 0, 0, None)
+                         # Draw final_img scaled to width/height directly
+                         g.drawImage(final_img, 0, 0, width, height, None)
                          
                          if self.tool_mode == 'measure' and (self.measure_p1 or self.measure_p2):
                             g.setColor(Color.RED)
