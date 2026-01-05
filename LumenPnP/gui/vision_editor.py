@@ -444,37 +444,57 @@ class VisionEditor:
 
     def live_loop(self):
         while self.running and self.window.isVisible():
-            if self.chk_live.isSelected():
-                self.capture_frame()
+            try:
+                if self.chk_live.isSelected():
+                    self.capture_frame()
+            except Exception as e:
+                print("Live Loop Error: " + str(e))
+                # Try to update label if possible
+                try: self.lbl_image.setText("Loop Error: " + str(e))
+                except: pass
             time.sleep(0.2) # 5 FPS
 
     def capture_frame(self):
         try:
             head = self.machine.getDefaultHead()
+            if not head:
+                 self.lbl_image.setText("No Head Found")
+                 return
+                 
             cam = head.getDefaultCamera()
-            if not cam: return
+            if not cam:
+                 self.lbl_image.setText("No Camera Found on Head")
+                 return
             
             # Capture
-            img = cam.capture()
+            try:
+                img = cam.capture()
+            except Exception as e:
+                self.lbl_image.setText("Capture Exception: " + str(e))
+                return
+                
             if not img:
                  self.lbl_image.setText("Camera Capture Failed (None)")
                  return
 
             # Process if profile selected
             if self.current_profile:
-                # engine returns found, center, res_img (color), stats, res_img_bin (annotated)
-                found, center, res_img, stats, res_img_bin = self.engine.process_image(img, self.current_profile)
-                
-                if self.chk_binary.isSelected():
-                    # Show binary for debug (now annotated!)
-                    final_img = res_img_bin
-                else:
-                    final_img = res_img
-                
-                if found and center:
-                     self.lbl_info.setText("FOUND: X=%.2f Y=%.2f Area=%d" % (center.x, center.y, stats.get('area', 0)))
-                else:
-                     self.lbl_info.setText("Not Found")
+                try:
+                    # engine returns found, center, res_img (color), stats, res_img_bin (annotated)
+                    found, center, res_img, stats, res_img_bin = self.engine.process_image(img, self.current_profile)
+                    
+                    if self.chk_binary.isSelected():
+                        final_img = res_img_bin
+                    else:
+                        final_img = res_img
+                    
+                    if found and center:
+                         self.lbl_info.setText("FOUND: X=%.2f Y=%.2f Area=%d" % (center.x, center.y, stats.get('area', 0)))
+                    else:
+                         self.lbl_info.setText("Not Found")
+                except Exception as e:
+                    self.lbl_image.setText("Vision Process Error: " + str(e))
+                    return
             else:
                 final_img = img
             
@@ -491,74 +511,70 @@ class VisionEditor:
             height = self.lbl_image.getHeight()
             
             if width > 0 and height > 0:
-                 # 1. Scale Image using getScaledInstance (Fast & Reliable)
-                 # Maintain full fill of label
-                 scaled = final_img.getScaledInstance(width, height, Image.SCALE_FAST)
-                 
-                 # 2. Draw to BufferedImage (to allow safe overlay drawing)
-                 bimg = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
-                 g = bimg.createGraphics()
-                 
-                 # Draw the scaled image onto the buffer
-                 g.drawImage(scaled, 0, 0, None)
-                 
-                 # 3. Draw Overlay (Measurement)
-                 if self.tool_mode == 'measure' and (self.measure_p1 or self.measure_p2):
-                    g.setColor(Color.RED)
-                    g.setStroke(BasicStroke(2))
-                    
-                    iw_raw = self.last_raw_w
-                    ih_raw = self.last_raw_h
-                    
-                    sx = float(width) / float(iw_raw)
-                    sy = float(height) / float(ih_raw)
-                    
-                    def to_screen(p):
-                        return (int(p[0] * sx), int(p[1] * sy))
-                    
-                    def draw_cross(p, color):
-                         s = to_screen(p)
-                         g.setColor(color)
-                         sz = 10
-                         g.drawLine(s[0]-sz, s[1], s[0]+sz, s[1])
-                         g.drawLine(s[0], s[1]-sz, s[0], s[1]+sz)
-                         return s
-                    
-                    s1 = None
-                    if self.measure_p1:
-                         s1 = draw_cross(self.measure_p1, Color.RED)
-                         
-                    if self.measure_p2:
-                         s2 = draw_cross(self.measure_p2, Color.GREEN)
-                         
-                         # Line
-                         g.setColor(Color.YELLOW)
-                         g.drawLine(s1[0], s1[1], s2[0], s2[1])
-                         
-                         # Distance
-                         import math
-                         dx = self.measure_p1[0] - self.measure_p2[0]
-                         dy = self.measure_p1[1] - self.measure_p2[1]
-                         dist_px = math.sqrt(dx*dx + dy*dy)
-                         
-                         # Draw Text on Image
-                         g.setColor(Color.WHITE)
-                         g.setFont(Font("SansSerif", Font.BOLD, 14))
-                         g.drawString("%.2f px" % dist_px, s2[0]+15, s2[1])
-                         
-                         # Update UI Label
-                         self.lbl_measure_val.setText("Dist: %.2f px" % dist_px)
-                    else:
-                         self.lbl_measure_val.setText("Dist: -")
-
-                 elif self.tool_mode != 'measure':
-                     self.lbl_measure_val.setText("Dist: -")
+                 try:
+                     # 1. Scale Image
+                     scaled = final_img.getScaledInstance(width, height, Image.SCALE_FAST)
                      
-                 g.dispose()
-                 icon = ImageIcon(bimg)
-                 
+                     # 2. Draw to BufferedImage
+                     bimg = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
+                     g = bimg.createGraphics()
+                     
+                     try:
+                         g.drawImage(scaled, 0, 0, None)
+                         
+                         # 3. Draw Overlay
+                         if self.tool_mode == 'measure' and (self.measure_p1 or self.measure_p2):
+                            g.setColor(Color.RED)
+                            g.setStroke(BasicStroke(2))
+                            
+                            iw_raw = self.last_raw_w
+                            ih_raw = self.last_raw_h
+                            if iw_raw > 0 and ih_raw > 0:
+                                sx = float(width) / float(iw_raw)
+                                sy = float(height) / float(ih_raw)
+                                
+                                def to_screen(p):
+                                    return (int(p[0] * sx), int(p[1] * sy))
+                                
+                                def draw_cross(p, color):
+                                     s = to_screen(p)
+                                     g.setColor(color)
+                                     sz = 10
+                                     g.drawLine(s[0]-sz, s[1], s[0]+sz, s[1])
+                                     g.drawLine(s[0], s[1]-sz, s[0], s[1]+sz)
+                                     return s
+                                
+                                s1 = None
+                                if self.measure_p1:
+                                     s1 = draw_cross(self.measure_p1, Color.RED)
+                                     
+                                if self.measure_p2:
+                                     s2 = draw_cross(self.measure_p2, Color.GREEN)
+                                     
+                                     g.setColor(Color.YELLOW)
+                                     g.drawLine(s1[0], s1[1], s2[0], s2[1])
+                                     
+                                     import math
+                                     dx = self.measure_p1[0] - self.measure_p2[0]
+                                     dy = self.measure_p1[1] - self.measure_p2[1]
+                                     dist_px = math.sqrt(dx*dx + dy*dy)
+                                     
+                                     g.setColor(Color.WHITE)
+                                     g.setFont(Font("SansSerif", Font.BOLD, 14))
+                                     g.drawString("%.2f px" % dist_px, s2[0]+15, s2[1])
+                                     self.lbl_measure_val.setText("Dist: %.2f px" % dist_px)
+                                else:
+                                     self.lbl_measure_val.setText("Dist: -")
+                            elif self.tool_mode != 'measure':
+                                 self.lbl_measure_val.setText("Dist: -")
+                     finally:
+                         g.dispose()
+                     
+                     icon = ImageIcon(bimg)
+                 except Exception as e:
+                     self.lbl_image.setText("Draw Error: " + str(e))
+                     return
             else:
-                 # Fallback for 0 size
                  icon = ImageIcon(final_img)
                  
             self.lbl_image.setIcon(icon)
@@ -566,6 +582,7 @@ class VisionEditor:
             
         except Exception as e:
             self.lbl_image.setText("Camera Error: " + str(e))
+            print("Capture Frame Error: " + str(e))
             
     def on_camera_click(self, e):
         """Handle click on camera feed"""
