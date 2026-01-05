@@ -2,7 +2,7 @@ import threading
 import time
 from javax.swing import JFrame, JPanel, JButton, JLabel, JList, JScrollPane, JSplitPane, JTextField, JCheckBox, JComboBox, DefaultListModel, BorderFactory, SwingConstants, ImageIcon, JOptionPane, JSlider, BoxLayout, Box
 from java.awt import BorderLayout, Dimension, Color, Image, Font, GridLayout, FlowLayout
-from java.awt.event import ActionListener
+from java.awt.event import ActionListener, MouseAdapter
 from javax.swing.event import ListSelectionListener, ChangeListener
 
 from LumenPnP.core.vision_store import VisionStore, VisionProfile
@@ -18,6 +18,11 @@ class VisionEditor:
         self.running = False
         self.stop_event = threading.Event()
         self.loading_ui = False
+        
+        # Click-to-Move State
+        self.last_raw_w = 0
+        self.last_raw_h = 0
+        
         
         self.window = JFrame("LumenPnP Custom Vision Editor")
         # Maximize Window
@@ -60,6 +65,13 @@ class VisionEditor:
         self.lbl_image.setOpaque(True)
         self.lbl_image.setBackground(Color.BLACK)
         self.lbl_image.setForeground(Color.WHITE)
+        
+        # Click-to-Move Listener
+        class VisionMouseListener(MouseAdapter):
+            def __init__(self, parent): self.parent = parent
+            def mouseClicked(self, e): self.parent.on_camera_click(e)
+            
+        self.lbl_image.addMouseListener(VisionMouseListener(self))
         center_panel.add(self.lbl_image, BorderLayout.CENTER)
         
         # Info Overlay Label
@@ -386,6 +398,10 @@ class VisionEditor:
             else:
                 final_img = img
             
+            # Update State
+            self.last_raw_w = final_img.getWidth()
+            self.last_raw_h = final_img.getHeight()
+            
             # Display
             # Display Scaled
             width = self.lbl_image.getWidth()
@@ -404,7 +420,73 @@ class VisionEditor:
             
         except Exception as e:
             self.lbl_image.setText("Camera Error: " + str(e))
-            # print(e)
+    def on_camera_click(self, e):
+        """Handle click on camera feed to move machine (Relative Move)"""
+        if self.last_raw_w == 0 or self.last_raw_h == 0:
+            return
+            
+        # 1. Get Click Coordinates
+        click_x = e.getX()
+        click_y = e.getY()
+        
+        # 2. Get Label Dimensions (The image is stretched to this)
+        lbl_w = self.lbl_image.getWidth()
+        lbl_h = self.lbl_image.getHeight()
+        
+        if lbl_w == 0 or lbl_h == 0: return
+        
+        # 3. Calculate Center of Label
+        center_x = lbl_w / 2.0
+        center_y = lbl_h / 2.0
+        
+        # 4. Calculate Delta in Pixels (Scaled)
+        delta_x_scaled = click_x - center_x
+        delta_y_scaled = click_y - center_y
+        
+        # 5. Un-Scale to Raw Pixels
+        scale_x = float(self.last_raw_w) / float(lbl_w)
+        scale_y = float(self.last_raw_h) / float(lbl_h)
+        
+        delta_x_raw = delta_x_scaled * scale_x
+        delta_y_raw = delta_y_scaled * scale_y
+        
+        # 6. Convert to Millimeters
+        try:
+            head = self.machine.getDefaultHead()
+            cam = head.getDefaultCamera()
+            upp = cam.getUnitsPerPixel()
+            
+            # X Move: Right on Image (Positive Delta) = Positive X Machine? 
+            # Usually yes.
+            move_x = delta_x_raw * upp.getX()
+            
+            # Y Move: Down on Image (Positive Delta) = Negative Y Machine?
+            # Standard OpenPnP: Top-Left origin image, Bottom-Left origin machine.
+            # So +Y image (down) = -Y machine (down)
+            move_y = delta_y_raw * upp.getY() * -1.0 
+            
+            # 7. Execute Move
+            current_loc = cam.getLocation()
+            from org.openpnp.model import Location
+            
+            # Target is relative to current
+            new_x = current_loc.getX() + move_x
+            new_y = current_loc.getY() + move_y
+            
+            target = Location(current_loc.getUnits(), new_x, new_y, current_loc.getZ(), current_loc.getRotation())
+            
+            def move_task():
+                try:
+                    speed = self.machine.getSpeed()
+                    cam.moveTo(target, speed)
+                    # self.lbl_info.setText("Moved: %.2f, %.2f" % (move_x, move_y))
+                except Exception as ex:
+                    self.lbl_info.setText("Move Error: " + str(ex))
+            
+            threading.Thread(target=move_task).start()
+            
+        except Exception as ex:
+            self.lbl_info.setText("Click Error: " + str(ex))
 
     def close(self):
         self.running = False
