@@ -24,6 +24,12 @@ class PocketCalibrator:
         try:
             if callback: callback("Calibrating pocket for " + feeder.getName())
             
+            # Capture Original State (Scope: Single Feeder)
+            head = self.machine.getDefaultHead()
+            cam = head.getDefaultCamera()
+            orig_brightness = self._get_cam_brightness(cam)
+
+            
             # 1. Get Part info
             part = feeder.getPart()
             if not part:
@@ -136,33 +142,53 @@ class PocketCalibrator:
             
             return True
 
+            return True
         except Exception as e:
             if callback: 
                 callback("Pocket Calibration Error: " + str(e))
             import traceback
             traceback.print_exc()
             return False
+        finally:
+             # Restore State
+             if 'orig_brightness' in locals() and orig_brightness >= 0 and 'cam' in locals():
+                 self._apply_cam_setting(cam, orig_brightness)
 
 
     def _apply_cam_setting(self, cam, brightness):
         try:
-            def set_prop(prop, value):
-                # Try to disable auto if exists
-                if hasattr(prop, "setAuto"):
-                    try: prop.setAuto(False)
-                    except: pass
-                # Set Value
-                if hasattr(prop, "setValue"):
-                    prop.setValue(int(value))
-                    
-            if hasattr(cam, "getBrightness"):
-                set_prop(cam.getBrightness(), brightness)
-            elif hasattr(cam, "getDevice"):
-                dev = cam.getDevice()
-                if hasattr(dev, "getBrightness"):
-                     set_prop(dev.getBrightness(), brightness)
+            self._set_prop(cam, brightness)
         except:
              pass
+
+    def _get_cam_brightness(self, cam):
+        try:
+             if hasattr(cam, "getBrightness"):
+                prop = cam.getBrightness()
+                if hasattr(prop, "getValue"): return int(prop.getValue())
+             elif hasattr(cam, "getDevice"):
+                dev = cam.getDevice()
+                if hasattr(dev, "getBrightness"):
+                    prop = dev.getBrightness()
+                    if hasattr(prop, "getValue"): return int(prop.getValue())
+        except:
+            return -1
+        return -1
+
+    def _set_prop(self, cam, value):
+        def set_p(prop, v):
+            if hasattr(prop, "setAuto"):
+                try: prop.setAuto(False)
+                except: pass
+            if hasattr(prop, "setValue"):
+                prop.setValue(int(v))
+        
+        if hasattr(cam, "getBrightness"):
+            set_p(cam.getBrightness(), value)
+        elif hasattr(cam, "getDevice"):
+            dev = cam.getDevice()
+            if hasattr(dev, "getBrightness"):
+                 set_p(dev.getBrightness(), value)
 
 class SlotCalibrator:
     FIDUCIAL_PART_NAME = "Fiducial-1mm"
@@ -199,7 +225,22 @@ class SlotCalibrator:
         except Exception as e:
             log_callback("CRITICAL: Vision Part setup failed: " + str(e))
             return
-
+        
+        # Capture Global State (Scope: Full Calibration Run)
+        global_orig_brightness = -1
+        try:
+            head = self.machine.getDefaultHead()
+            cam = head.getDefaultCamera()
+            # Reuse helper if possible or duplicate? Accessing helper from instance
+            # PocketCalibrator has the helper methods now. 
+            # Let's verify we can access them or copy them. 
+            # Simpler to rely on pocket_calibrator's instance methods if they were public/static, 
+            # but they are instance private-ish.
+            # I will just use pocket_calibrator's helper since we have the instance.
+            global_orig_brightness = pocket_calibrator._get_cam_brightness(cam)
+        except:
+            pass
+            
         # 2. Sort Feeders
         try:
             feeders.sort(key=self._get_slot_number)
@@ -303,6 +344,16 @@ class SlotCalibrator:
                 log_callback("Configuration saved.")
         except Exception as e:
             log_callback("Error saving config: " + str(e))
+            
+        # Restore Global State
+        try:
+            if global_orig_brightness >= 0:
+                head = self.machine.getDefaultHead()
+                cam = head.getDefaultCamera()
+                pocket_calibrator._apply_cam_setting(cam, global_orig_brightness)
+                log_callback("Restored camera brightness.")
+        except:
+            pass
 
     def _get_fiducial_part(self, log_fn):
         config = Configuration.get()
