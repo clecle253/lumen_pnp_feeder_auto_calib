@@ -1,0 +1,411 @@
+import threading
+import time
+from javax.swing import JFrame, JPanel, JButton, JLabel, JList, JScrollPane, JSplitPane, JTextField, JCheckBox, JComboBox, DefaultListModel, BorderFactory, SwingConstants, ImageIcon, JOptionPane, JSlider, BoxLayout, Box
+from java.awt import BorderLayout, Dimension, Color, Image, Font, GridLayout, FlowLayout
+from java.awt.event import ActionListener
+from javax.swing.event import ListSelectionListener, ChangeListener
+
+from LumenPnP.core.vision_store import VisionStore, VisionProfile
+from LumenPnP.core.vision_core import VisionEngine
+from org.openpnp.util import OpenCvUtils
+
+class VisionEditor:
+    def __init__(self, machine, parent_window=None):
+        self.machine = machine
+        self.store = VisionStore()
+        self.current_profile = None
+        self.engine = VisionEngine()
+        self.running = False
+        self.stop_event = threading.Event()
+        self.loading_ui = False
+        
+        self.window = JFrame("LumenPnP Custom Vision Editor")
+        # Maximize Window
+        self.window.setExtendedState(JFrame.MAXIMIZED_BOTH)
+            
+        # UI Components
+        self.setup_ui()
+        
+        self.window.setVisible(True)
+        self.window.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE)
+        
+        # Start Live Loop (Paused by default? or Auto-start?)
+        self.start_live_view()
+
+    def setup_ui(self):
+        # 1. Left Panel: Profile List
+        left_panel = JPanel(BorderLayout())
+        left_panel.setPreferredSize(Dimension(200, 0))
+        left_panel.setBorder(BorderFactory.createTitledBorder("Profiles"))
+        
+        self.list_model = DefaultListModel()
+        self.profile_list = JList(self.list_model)
+        self.profile_list.addListSelectionListener(lambda e: self.on_profile_selected())
+        
+        scroll_list = JScrollPane(self.profile_list)
+        left_panel.add(scroll_list, BorderLayout.CENTER)
+        
+        btn_panel = JPanel(GridLayout(1, 2))
+        btn_add = JButton("New", actionPerformed=self.on_add_profile)
+        btn_del = JButton("Delete", actionPerformed=self.on_delete_profile)
+        btn_panel.add(btn_add)
+        btn_panel.add(btn_del)
+        left_panel.add(btn_panel, BorderLayout.SOUTH)
+        
+        # 2. Center Panel: Camera View
+        center_panel = JPanel(BorderLayout())
+        center_panel.setBorder(BorderFactory.createTitledBorder("Camera View"))
+        
+        self.lbl_image = JLabel("Waiting for Camera...", SwingConstants.CENTER)
+        self.lbl_image.setOpaque(True)
+        self.lbl_image.setBackground(Color.BLACK)
+        self.lbl_image.setForeground(Color.WHITE)
+        center_panel.add(self.lbl_image, BorderLayout.CENTER)
+        
+        # Info Overlay Label
+        self.lbl_info = JLabel("Status: -")
+        self.lbl_info.setForeground(Color.BLUE)
+        self.lbl_info.setFont(Font("Serif", Font.BOLD, 16))
+        
+        # Path Label (South, small)
+        self.lbl_path = JLabel("Config: ...")
+        
+        top_info_panel = JPanel(BorderLayout())
+        top_info_panel.add(self.lbl_info, BorderLayout.CENTER)
+        top_info_panel.add(self.lbl_path, BorderLayout.SOUTH)
+        
+        center_panel.add(top_info_panel, BorderLayout.NORTH)
+        
+        cam_ctrl_panel = JPanel(FlowLayout())
+        self.chk_live = JCheckBox("Live View", True)
+        self.chk_binary = JCheckBox("Show Threshold (Debug)", False)
+        cam_ctrl_panel.add(self.chk_live)
+        cam_ctrl_panel.add(self.chk_binary)
+        
+        btn_capture = JButton("Force Capture", actionPerformed=lambda e: self.capture_frame())
+        cam_ctrl_panel.add(btn_capture)
+        center_panel.add(cam_ctrl_panel, BorderLayout.SOUTH)
+        
+        # 3. Right Panel: Settings
+        right_panel = JPanel()
+        # Use GridLayout for the form: 0 rows (auto), 2 columns (Label, Field)
+        # We need a wrapper panel to prevent it from stretching vertically if we use Border/Box context, 
+        # but inside the split pane, a simple JPanel with standard layout might be tricky.
+        # Let's use a nice vertical Box layout but with a specialized form panel inside.
+        
+        right_panel.setLayout(BorderLayout())
+        right_panel.setPreferredSize(Dimension(300, 0))
+        right_panel.setBorder(BorderFactory.createTitledBorder("Settings"))
+
+        # Form Container
+        form_panel = JPanel(GridLayout(0, 2, 5, 10)) # 2 cols, hgap 5, vgap 10
+        form_panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10))
+        
+        # Name
+        form_panel.add(JLabel("Name:"))
+        self.txt_name = JTextField()
+        form_panel.add(self.txt_name)
+        
+        # Method
+        form_panel.add(JLabel("Method:"))
+        self.cmb_method = JComboBox(VisionProfile.METHODS)
+        self.cmb_method.addActionListener(lambda e: self.save_ui_to_profile())
+        form_panel.add(self.cmb_method)
+
+        # Brightness / Contrast
+        form_panel.add(JLabel("Brightness:"))
+        self.sld_bright = JSlider(-100, 100, 0)
+        self.sld_bright.addChangeListener(lambda e: self.save_ui_to_profile())
+        form_panel.add(self.sld_bright)
+        
+        form_panel.add(JLabel("Contrast:"))
+        self.sld_contrast = JSlider(-100, 100, 0)
+        self.sld_contrast.addChangeListener(lambda e: self.save_ui_to_profile())
+        form_panel.add(self.sld_contrast)
+        
+        # Hardware Brightness
+        form_panel.add(JLabel("Camera Brightness (-1=Def):"))
+        self.sld_cam_bright = JSlider(-100, 100, -1)
+        # We apply immediately for visual feedback
+        self.sld_cam_bright.addChangeListener(lambda e: self.on_cam_brightness_change())
+        form_panel.add(self.sld_cam_bright)
+        
+        # Masking
+        form_panel.add(JLabel("Mask Type:"))
+        self.cmb_mask = JComboBox(["NONE", "RECT", "CIRCLE"])
+        self.cmb_mask.addActionListener(lambda e: self.save_ui_to_profile())
+        form_panel.add(self.cmb_mask)
+        
+        form_panel.add(JLabel("Mask W/Dia:"))
+        self.txt_mask_w = JTextField("600")
+        form_panel.add(self.txt_mask_w)
+        
+        form_panel.add(JLabel("Mask Height:"))
+        self.txt_mask_h = JTextField("600")
+        form_panel.add(self.txt_mask_h) # Ignored if Circle
+
+        # Threshold Min
+        form_panel.add(JLabel("Threshold Min:"))
+        self.sld_min = JSlider(0, 255, 100)
+        self.sld_min.addChangeListener(lambda e: self.save_ui_to_profile())
+        form_panel.add(self.sld_min)
+        
+        # Threshold Max
+        form_panel.add(JLabel("Threshold Max:"))
+        self.sld_max = JSlider(0, 255, 255)
+        self.sld_max.addChangeListener(lambda e: self.save_ui_to_profile())
+        form_panel.add(self.sld_max)
+        
+        # Invert
+        form_panel.add(JLabel("Invert Colors:"))
+        self.chk_invert = JCheckBox("", actionPerformed=lambda e: self.save_ui_to_profile())
+        form_panel.add(self.chk_invert)
+        
+        # Dimensions
+        form_panel.add(JLabel("Min Area:"))
+        self.txt_min_area = JTextField("500")
+        form_panel.add(self.txt_min_area)
+        
+        form_panel.add(JLabel("Max Area:"))
+        self.txt_max_area = JTextField("50000")
+        form_panel.add(self.txt_max_area)
+        
+        form_panel.add(JLabel("Min Width:"))
+        self.txt_min_w = JTextField("10")
+        form_panel.add(self.txt_min_w)
+        
+        form_panel.add(JLabel("Max Width:"))
+        self.txt_max_w = JTextField("500")
+        form_panel.add(self.txt_max_w)
+        
+        form_panel.add(JLabel("Min Height:"))
+        self.txt_min_h = JTextField("10")
+        form_panel.add(self.txt_min_h)
+        
+        form_panel.add(JLabel("Max Height:"))
+        self.txt_max_h = JTextField("500")
+        form_panel.add(self.txt_max_h)
+        
+        # Apply Button (South of Right Panel)
+        btn_apply = JButton("Apply & Save", actionPerformed=lambda e: self.save_ui_to_profile())
+        
+        # Add to Right Panel
+        # We put form_panel in a wrapper to keep it at the top
+        top_wrapper = JPanel(BorderLayout())
+        top_wrapper.add(form_panel, BorderLayout.NORTH)
+        
+        right_panel.add(top_wrapper, BorderLayout.CENTER)
+        right_panel.add(btn_apply, BorderLayout.SOUTH)
+
+        # Split Panes
+        split_right = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, center_panel, right_panel)
+        split_right.setResizeWeight(0.7)
+        
+        split_main = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left_panel, split_right)
+        self.window.add(split_main, BorderLayout.CENTER)
+        
+        # Listeners for TextFields to auto-update?
+        # Maybe just use the "Apply" button for the text fields to avoid lag
+        
+        # Auto-select first
+        self.refresh_list(select_first=True)
+        self.lbl_path.setText("Config: " + str(self.store.config_file))
+
+    def refresh_list(self, select_first=False):
+        self.list_model.clear()
+        profiles = self.store.get_all_profiles()
+        first = None
+        for i, p in enumerate(profiles):
+            self.list_model.addElement(p.name)
+            if i==0: first = p.name
+            
+        if select_first and first:
+            self.profile_list.setSelectedValue(first, True)
+        
+        # precise selection if possible?
+
+    def on_profile_selected(self):
+        name = self.profile_list.getSelectedValue()
+        if not name: return
+        if not name: return
+        self.current_profile = self.store.get_profile(name)
+        # FORCE UI Update
+        self.profile_to_ui(self.current_profile)
+        self.window.revalidate()
+        self.window.repaint()
+
+    def profile_to_ui(self, p):
+        if not p: return
+        self.loading_ui = True
+        try:
+            self.txt_name.setText(p.name)
+            self.cmb_method.setSelectedItem(p.method)
+            
+            self.sld_bright.setValue(int(getattr(p, 'brightness', 0)))
+            self.sld_contrast.setValue(int(getattr(p, 'contrast', 0)))
+            
+            # Hardware
+            cam_br = int(getattr(p, 'camera_brightness', -1))
+            self.sld_cam_bright.setValue(cam_br)
+            
+            self.cmb_mask.setSelectedItem(getattr(p, 'mask_type', "NONE"))
+            self.txt_mask_w.setText(str(getattr(p, 'mask_width', 600)))
+            self.txt_mask_h.setText(str(getattr(p, 'mask_height', 600)))
+            
+            self.sld_min.setValue(int(p.threshold_min))
+            self.sld_max.setValue(int(p.threshold_max))
+            self.chk_invert.setSelected(p.invert)
+            self.txt_min_area.setText(str(p.min_area))
+            self.txt_max_area.setText(str(p.max_area))
+            self.txt_min_w.setText(str(p.min_width))
+            self.txt_max_w.setText(str(p.max_width))
+            self.txt_min_h.setText(str(p.min_height))
+            self.txt_max_h.setText(str(p.max_height))
+        finally:
+            self.loading_ui = False
+
+    def save_ui_to_profile(self):
+        if self.loading_ui: return
+        if not self.current_profile: return
+        try:
+            p = self.current_profile
+            # Name change? tricky. handle later.
+            p.method = self.cmb_method.getSelectedItem()
+            
+            p.brightness = self.sld_bright.getValue()
+            p.contrast = self.sld_contrast.getValue()
+            
+            p.camera_brightness = self.sld_cam_bright.getValue()
+            
+            p.mask_type = self.cmb_mask.getSelectedItem()
+            p.mask_width = int(self.txt_mask_w.getText())
+            p.mask_height = int(self.txt_mask_h.getText())
+            
+            p.threshold_min = self.sld_min.getValue()
+            p.threshold_max = self.sld_max.getValue()
+            p.invert = self.chk_invert.isSelected()
+            
+            p.min_area = int(self.txt_min_area.getText())
+            p.max_area = int(self.txt_max_area.getText())
+            p.min_width = int(self.txt_min_w.getText())
+            p.max_width = int(self.txt_max_w.getText())
+            p.min_height = int(self.txt_min_h.getText())
+            p.max_height = int(self.txt_max_h.getText())
+            
+            self.store.save_profile(p)
+            self.lbl_info.setText("Settings Saved for: " + p.name)
+            # Reload to ensure consistency?
+            self.current_profile = self.store.get_profile(p.name)
+        except Exception as e:
+            self.lbl_info.setText("Error saving profile: " + str(e))
+
+    def on_cam_brightness_change(self):
+        # Update profile and set camera prop
+        # if not self.chk_live.isSelected(): return 
+        
+        val = self.sld_cam_bright.getValue()
+        if self.current_profile:
+             self.current_profile.camera_brightness = val
+        
+        # Apply to Camera
+        try:
+            head = self.machine.getDefaultHead()
+            cam = head.getDefaultCamera()
+            
+            # Helper to set property
+            def set_prop(prop, value):
+                # Try to disable auto if exists
+                if hasattr(prop, "setAuto"):
+                    try: prop.setAuto(False)
+                    except: pass
+                # Set Value
+                if hasattr(prop, "setValue"):
+                    prop.setValue(int(value))
+            
+            if hasattr(cam, "getBrightness"):
+                # Use the PropertyHolder
+                set_prop(cam.getBrightness(), val)
+            elif hasattr(cam, "getDevice"):
+                # Fallback to Device if method missing on Cam wrapper (rare but possible)
+                dev = cam.getDevice()
+                if hasattr(dev, "getBrightness"):
+                     set_prop(dev.getBrightness(), val)
+                     
+        except Exception as e:
+             self.lbl_image.setText("Cam Control Error: " + str(e))
+             
+    def on_add_profile(self, e):
+        name = JOptionPane.showInputDialog(self.window, "Enter Profile Name:")
+        if name:
+            new_p = VisionProfile(name)
+            self.store.save_profile(new_p)
+            self.refresh_list()
+            self.profile_list.setSelectedValue(name, True)
+
+    def on_delete_profile(self, e):
+        name = self.profile_list.getSelectedValue()
+        if name:
+            self.store.delete_profile(name)
+            self.refresh_list()
+
+    def start_live_view(self):
+        self.running = True
+        t = threading.Thread(target=self.live_loop)
+        t.start()
+
+    def live_loop(self):
+        while self.running and self.window.isVisible():
+            if self.chk_live.isSelected():
+                self.capture_frame()
+            time.sleep(0.2) # 5 FPS
+
+    def capture_frame(self):
+        try:
+            head = self.machine.getDefaultHead()
+            cam = head.getDefaultCamera()
+            if not cam: return
+            
+            # Capture
+            img = cam.capture()
+            
+            # Process if profile selected
+            if self.current_profile:
+                # engine returns found, center, res_img (color), stats, res_img_bin (annotated)
+                found, center, res_img, stats, res_img_bin = self.engine.process_image(img, self.current_profile)
+                
+                if self.chk_binary.isSelected():
+                    # Show binary for debug (now annotated!)
+                    final_img = res_img_bin
+                else:
+                    final_img = res_img
+                
+                if found and center:
+                     self.lbl_info.setText("FOUND: X=%.2f Y=%.2f Area=%d" % (center.x, center.y, stats.get('area', 0)))
+                else:
+                     self.lbl_info.setText("Not Found")
+            else:
+                final_img = img
+            
+            # Display
+            # Display Scaled
+            width = self.lbl_image.getWidth()
+            height = self.lbl_image.getHeight()
+            if width > 0 and height > 0:
+                 # Maintain aspect ratio
+                 # iw, ih = final_img.getWidth(), final_img.getHeight()
+                 # scale = min(width/iw, height/ih)
+                 scaled = final_img.getScaledInstance(width, height, Image.SCALE_FAST)
+                 icon = ImageIcon(scaled)
+            else:
+                 icon = ImageIcon(final_img)
+                 
+            self.lbl_image.setIcon(icon)
+            self.lbl_image.setText("")
+            
+        except Exception as e:
+            self.lbl_image.setText("Camera Error: " + str(e))
+            # print(e)
+
+    def close(self):
+        self.running = False
+        self.window.dispose()
