@@ -1,6 +1,7 @@
 import threading
 import time
-from javax.swing import JFrame, JPanel, JButton, JLabel, JList, JScrollPane, JSplitPane, JTextField, JCheckBox, JComboBox, DefaultListModel, BorderFactory, SwingConstants, ImageIcon, JOptionPane, JSlider, BoxLayout, Box, JToggleButton, ButtonGroup
+from javax.swing import JFrame, JPanel, JButton, JLabel, JList, JScrollPane, JSplitPane, JTextField, JCheckBox, JComboBox, DefaultListModel, BorderFactory, SwingConstants, ImageIcon, JOptionPane, JSlider, BoxLayout, Box, JToggleButton, ButtonGroup, SwingUtilities
+from java.lang import Runnable
 from java.awt import BorderLayout, Dimension, Color, Image, Font, GridLayout, FlowLayout, BasicStroke, RenderingHints
 from java.awt.image import BufferedImage
 from java.awt.event import ActionListener, MouseAdapter, WindowAdapter
@@ -443,14 +444,23 @@ class VisionEditor:
         t.start()
 
     def live_loop(self):
+        # DEBUG: Check if thread starts
+        print("DEBUG: Thread Started")
+        def update_start(): self.lbl_image.setText("DEBUG: Thread Started")
+        try: SwingUtilities.invokeLater(update_start)
+        except: pass
+        
         while self.running and self.window.isVisible():
             try:
                 if self.chk_live.isSelected():
+                    # DEBUG: capturing
+                    # def update_cap(): self.lbl_image.setText("DEBUG: Capturing...")
+                    # SwingUtilities.invokeLater(update_cap)
                     self.capture_frame()
             except Exception as e:
                 print("Live Loop Error: " + str(e))
-                # Try to update label if possible
-                try: self.lbl_image.setText("Loop Error: " + str(e))
+                def update_err(): self.lbl_image.setText("Loop Error: " + str(e))
+                try: SwingUtilities.invokeLater(update_err)
                 except: pass
             time.sleep(0.2) # 5 FPS
 
