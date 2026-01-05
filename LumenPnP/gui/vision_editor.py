@@ -2,7 +2,7 @@ import threading
 import time
 from javax.swing import JFrame, JPanel, JButton, JLabel, JList, JScrollPane, JSplitPane, JTextField, JCheckBox, JComboBox, DefaultListModel, BorderFactory, SwingConstants, ImageIcon, JOptionPane, JSlider, BoxLayout, Box
 from java.awt import BorderLayout, Dimension, Color, Image, Font, GridLayout, FlowLayout
-from java.awt.event import ActionListener, MouseAdapter
+from java.awt.event import ActionListener, MouseAdapter, WindowAdapter
 from javax.swing.event import ListSelectionListener, ChangeListener
 
 from LumenPnP.core.vision_store import VisionStore, VisionProfile
@@ -38,7 +38,14 @@ class VisionEditor:
         self.setup_ui()
         
         self.window.setVisible(True)
-        self.window.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE)
+        self.window.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE)
+        
+        class CloseListener(WindowAdapter):
+            def __init__(self, parent): self.parent = parent
+            def windowClosing(self, e):
+                self.parent.close()
+                
+        self.window.addWindowListener(CloseListener(self))
         
         # Start Live Loop (Paused by default? or Auto-start?)
         self.start_live_view()
@@ -544,5 +551,8 @@ class VisionEditor:
                          set_prop(dev.getBrightness())
             except:
                 pass
+            
+            # Prevent double restore
+            self.orig_cam_state = None
                 
         self.window.dispose()
