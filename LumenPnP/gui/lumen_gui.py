@@ -801,7 +801,7 @@ class LumenPnPGUI:
             from LumenPnP.core.navigation import MapNavigator
             from LumenPnP.core.calibration import SlotCalibrator, PocketCalibrator
             from LumenPnP.core.kicad_importer import KiCadImporter
-            from LumenPnP.core.vision_helper import VisionHelper
+
             import re
             
             try:
@@ -1039,10 +1039,7 @@ class LumenPnPGUI:
         action_panel.add(self.btn_cal_pocket)
         action_panel.add(Box.createVerticalStrut(10))
 
-        self.btn_fix_vision = make_button("Auto-Fix Vision", lambda e: self._fix_vision_for_selected_feeder(), Color(100, 200, 255))
-        self.btn_fix_vision.setEnabled(False)
-        action_panel.add(self.btn_fix_vision)
-        action_panel.add(Box.createVerticalStrut(10))
+
 
         self.btn_vision_editor = make_button("Vision Editor (NEW)", lambda e: self._open_vision_editor(), Color(255, 200, 100))
         action_panel.add(self.btn_vision_editor)
@@ -1090,7 +1087,7 @@ class LumenPnPGUI:
         
         self.btn_cal_selected.setEnabled(True)
         self.btn_cal_pocket.setEnabled(True)
-        self.btn_fix_vision.setEnabled(True)
+
         self.btn_goto_feeder.setEnabled(True)
             
         if hasattr(self, 'btn_cal_pocket'):
@@ -1263,43 +1260,7 @@ class LumenPnPGUI:
         t = threading.Thread(target=run_task)
         t.start()
 
-    def _fix_vision_for_selected_feeder(self):
-        """Replaces the vision pipeline for the selected feeder's part."""
-        feeder = self.selected_feeder
-        if not feeder:
-            return
-            
-        part = feeder.getPart()
-        if not part:
-            self.log("Error: Feeder has no Part assigned.")
-            return
-            
-        # For OpenPnP 2.0, feeders use Packages for vision settings usually?
-        # Or does the part have the vision?
-        # Actually PhotonFeeder uses FiducialLocator which uses the Part's package settings if defined,
-        # or the Part's specific settings.
-        # Let's target the Package as that's what controls the vision pipeline usually.
-        pkg = part.getPackage()
-        if not pkg:
-            self.log("Error: Part has no Package.")
-            return
-            
-        confirm = Swing.JOptionPane.showConfirmDialog(
-            self.window,
-            "Reset Vision Pipeline for package '" + pkg.getName() + "'?\nThis will DELETE the current pipeline and replace it with Circular Symmetry.",
-            "Confirm Vision Reset",
-            Swing.JOptionPane.YES_NO_OPTION
-        )
-        
-        if confirm == Swing.JOptionPane.YES_OPTION:
-            self.log("Resetting vision pipeline for: " + pkg.getName())
-            helper = VisionHelper()
-            success = helper.setup_pocket_pipeline(pkg)
-            if success:
-                self.log("Pipeline reset successfully!")
-                Swing.JOptionPane.showMessageDialog(self.window, "Pipeline Updated!\nGo to Vision tab to adjust Diameter.")
-            else:
-                self.log("Failed to reset pipeline.")
+
 
     def _open_vision_editor(self):
         from LumenPnP.gui.vision_editor import VisionEditor
