@@ -21,8 +21,13 @@ class VisionEditor:
         
         # Click-to-Move State
         self.last_raw_w = 0
+        # Click-to-Move State
+        self.last_raw_w = 0
         self.last_raw_h = 0
         
+        # Original Camera State (for Restore)
+        self.orig_cam_brightness = -1
+        self._capture_original_cam_state()
         
         self.window = JFrame("LumenPnP Custom Vision Editor")
         # Maximize Window
@@ -36,6 +41,23 @@ class VisionEditor:
         
         # Start Live Loop (Paused by default? or Auto-start?)
         self.start_live_view()
+
+    def _capture_original_cam_state(self):
+        try:
+            head = self.machine.getDefaultHead()
+            cam = head.getDefaultCamera()
+            if hasattr(cam, "getBrightness"):
+                prop = cam.getBrightness()
+                if hasattr(prop, "getValue"):
+                     self.orig_cam_brightness = int(prop.getValue())
+            elif hasattr(cam, "getDevice"):
+                dev = cam.getDevice()
+                if hasattr(dev, "getBrightness"):
+                     prop = dev.getBrightness()
+                     if hasattr(prop, "getValue"):
+                        self.orig_cam_brightness = int(prop.getValue())
+        except:
+             pass
 
     def setup_ui(self):
         # 1. Left Panel: Profile List
@@ -490,4 +512,24 @@ class VisionEditor:
 
     def close(self):
         self.running = False
+        
+        # Restore Camera State
+        if self.orig_cam_brightness >= 0:
+            try:
+                head = self.machine.getDefaultHead()
+                cam = head.getDefaultCamera()
+                
+                def set_prop(prop, val):
+                     if hasattr(prop, "setValue"):
+                        prop.setValue(int(val))
+                        
+                if hasattr(cam, "getBrightness"):
+                    set_prop(cam.getBrightness(), self.orig_cam_brightness)
+                elif hasattr(cam, "getDevice"):
+                     dev = cam.getDevice()
+                     if hasattr(dev, "getBrightness"):
+                         set_prop(dev.getBrightness(), self.orig_cam_brightness)
+            except:
+                pass
+                
         self.window.dispose()

@@ -70,6 +70,14 @@ class PocketCalibrator:
             
             # 4. Capture & Process
             if callback: callback("Analysing image...")
+            
+            # Apply Hardware Settings from Profile (if any)
+            # This is critical for White vs Black tape
+            cam_brightness = int(getattr(profile, 'camera_brightness', -1))
+            if cam_brightness >= 0:
+                self._apply_cam_setting(cam, cam_brightness)
+                time.sleep(0.2) # Wait for exposure to settle
+                
             img = cam.capture()
             # process_image returns: found, center, res_img, stats, res_img_bin
             found, center, _, _, _ = self.engine.process_image(img, profile)
@@ -135,6 +143,26 @@ class PocketCalibrator:
             traceback.print_exc()
             return False
 
+
+    def _apply_cam_setting(self, cam, brightness):
+        try:
+            def set_prop(prop, value):
+                # Try to disable auto if exists
+                if hasattr(prop, "setAuto"):
+                    try: prop.setAuto(False)
+                    except: pass
+                # Set Value
+                if hasattr(prop, "setValue"):
+                    prop.setValue(int(value))
+                    
+            if hasattr(cam, "getBrightness"):
+                set_prop(cam.getBrightness(), brightness)
+            elif hasattr(cam, "getDevice"):
+                dev = cam.getDevice()
+                if hasattr(dev, "getBrightness"):
+                     set_prop(dev.getBrightness(), brightness)
+        except:
+             pass
 
 class SlotCalibrator:
     FIDUCIAL_PART_NAME = "Fiducial-1mm"
