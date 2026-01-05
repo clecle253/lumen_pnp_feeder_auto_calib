@@ -61,7 +61,7 @@ class LumenPnPGUI:
         """Create Tkinter-based GUI"""
         self.window = tk.Tk()
         self.window.title("LumenPnP Plugin")
-        self.window.geometry("900x700")
+        self.window.geometry("1200x900")
         
         # Create main container
         main_frame = ttk.Frame(self.window, padding="10")
@@ -724,8 +724,8 @@ class LumenPnPGUI:
                      target_h = icon.getIconHeight() + 350 # + Header + Log Panel (Increased from 200)
                      
                      # Don't shrink below minimum
-                     target_w = max(1000, target_w)
-                     target_h = max(700, target_h)
+                     target_w = max(1200, target_w)
+                     target_h = max(900, target_h)
                      
                      # Don't grow beyond screen (heuristic)
                      target_w = min(1900, target_w)
@@ -895,7 +895,7 @@ class LumenPnPGUI:
         from java.awt import BorderLayout, GridLayout, FlowLayout, Dimension, Color, Font
         
         self.window = JFrame("LumenPnP Plugin")
-        self.window.setSize(1000, 700)
+        self.window.setSize(1200, 900)
         self.window.setLayout(BorderLayout())
         
         # Tabs
