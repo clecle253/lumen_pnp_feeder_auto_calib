@@ -791,9 +791,34 @@ class LumenPnPGUI:
             
             lbl_name.setText(" " + final_text)
             self.feeder_map[slot_id] = feeder
+            
+            # Enable Inline Buttons
+            btn_f = widget.getClientProperty("btn_f")
+            btn_p = widget.getClientProperty("btn_p")
+            
+            if btn_f:
+                btn_f.setVisible(True)
+                # Remove old listeners to prevent stacking? 
+                # Jython makes removeActionListener tricky if we used lambdas.
+                # Better: clean all, then add.
+                for l in btn_f.getActionListeners(): btn_f.removeActionListener(l)
+                btn_f.addActionListener(lambda e, f=feeder: self._move_to_feeder_slot(f))
+                
+            if btn_p:
+                btn_p.setVisible(True)
+                for l in btn_p.getActionListeners(): btn_p.removeActionListener(l)
+                btn_p.addActionListener(lambda e, f=feeder: self._move_to_feeder_pocket(f))
+            
         else:
             widget.setBackground(widget.getClientProperty("original_bg"))
             lbl_name.setText(" Empty")
+            
+            # Hide Buttons
+            btn_f = widget.getClientProperty("btn_f")
+            if btn_f: btn_f.setVisible(False)
+            
+            btn_p = widget.getClientProperty("btn_p")
+            if btn_p: btn_p.setVisible(False)
 
     def _scan_feeders(self):
         try:
@@ -967,10 +992,10 @@ class LumenPnPGUI:
             p = JPanel(BorderLayout())
             p.setBorder(BorderFactory.createLineBorder(Color.LIGHT_GRAY))
             p.setBackground(Color(240, 240, 240)) # Default Gray
-            p.setPreferredSize(Dimension(150, 20))
+            p.setPreferredSize(Dimension(150, 24)) # Slightly Taller for buttons
             
             lbl_id = JLabel(" " + str(slot_id) + " ", SwingConstants.CENTER)
-            lbl_id.setPreferredSize(Dimension(30, 20))
+            lbl_id.setPreferredSize(Dimension(30, 24))
             lbl_id.setBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, Color.LIGHT_GRAY))
             
             lbl_name = JLabel(" Empty", SwingConstants.LEFT)
@@ -979,12 +1004,43 @@ class LumenPnPGUI:
             p.add(lbl_id, BorderLayout.WEST)
             p.add(lbl_name, BorderLayout.CENTER)
             
+            # Inline Buttons Panel (Right)
+            btn_panel = JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0))
+            btn_panel.setOpaque(False)
+            
+            # Helper for mini button
+            def make_mini_btn(txt, tip, bg):
+                b = JButton(txt)
+                b.setMargin(swing.Insets(0,2,0,2))
+                b.setFont(Font("SansSerif", Font.BOLD, 9))
+                b.setPreferredSize(Dimension(20, 22))
+                b.setToolTipText(tip)
+                b.setBackground(bg)
+                b.setFocusable(False)
+                # Prevent click passing to parent slot widget (partially)
+                return b
+
+            btn_f = make_mini_btn("F", "Go to Feeder Slot", Color(220, 220, 220))
+            btn_p = make_mini_btn("P", "Go to Pocket", Color(200, 230, 255))
+            
+            # Init Hidden/Disabled
+            btn_f.setVisible(False)
+            btn_p.setVisible(False)
+            
+            btn_panel.add(btn_f)
+            btn_panel.add(btn_p)
+            
+            p.add(btn_panel, BorderLayout.EAST)
+            
             # Add interaction
             p.addMouseListener(SlotMouseListener(slot_id, self))
             
             # Store references
             p.putClientProperty("lbl_name", lbl_name)
             p.putClientProperty("original_bg", Color(240, 240, 240))
+            p.putClientProperty("btn_f", btn_f)
+            p.putClientProperty("btn_p", btn_p)
+            
             self.slot_widgets[slot_id] = p
             return p
 
@@ -1142,12 +1198,14 @@ class LumenPnPGUI:
         t.start()
 
     def _move_to_selected_feeder(self):
-        """Move camera to the selected feeder's Slot Location (Base)"""
+        """Move camera to the currently selected feeder's Slot"""
+        if not hasattr(self, 'selected_feeder') or not self.selected_feeder:
+            return
+        self._move_to_feeder_slot(self.selected_feeder)
+
+    def _move_to_feeder_slot(self, feeder):
         try:
-            if not hasattr(self, 'selected_feeder') or not self.selected_feeder:
-                return
-                
-            feeder = self.selected_feeder
+            if not feeder: return
             location = feeder.getLocation()
             
             # Use Slot location if available (Base)
@@ -1155,17 +1213,19 @@ class LumenPnPGUI:
                  location = feeder.getSlot().getLocation()
             
             self._move_camera_to(location)
-            
         except Exception as e:
             self.log("Error moving to feeder: " + str(e))
 
     def _move_to_selected_pocket(self):
-        """Move camera to the selected feeder's Pocket Location (Base + Offset)"""
+        """Move camera to the selected feeder's Pocket"""
+        if not hasattr(self, 'selected_feeder') or not self.selected_feeder:
+            return
+        self._move_to_feeder_pocket(self.selected_feeder)
+
+    def _move_to_feeder_pocket(self, feeder):
+        """Move camera to the feeder's Pocket Location (Base + Offset)"""
         try:
-            if not hasattr(self, 'selected_feeder') or not self.selected_feeder:
-                return
-                
-            feeder = self.selected_feeder
+            if not feeder: return
             location = feeder.getLocation() # Usually Base
             
             # Add Offset if exists
