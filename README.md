@@ -48,3 +48,21 @@ Le script va :
     *   Utiliser la fonction `machine.getVision().locate()` avec la pièce "Fiducial-1mm".
     *   Si le fiducial est trouvé, mettre à jour les coordonnées X et Y du feeder avec la nouvelle position précise.
     *   Le Z est conservé tel quel.
+
+## Jobs Fab (envoi depuis KiCad)
+
+Le bouton **Fab** de [kicad_library_manager](https://github.com/clecle253/kicad_library_manager) dépose un fichier
+`<carte>_<date>.fabjob.json` dans un dossier partagé. Dans l'onglet KiCad du plugin :
+
+1. Choisir ce dossier dans « Jobs Fab » (il est mémorisé). Le plugin le surveille et annonce dans le log
+   chaque nouveau job.
+2. « Charger le dernier job » remplit le tableau de validation. Seules les pièces marquées `machine`
+   (face dessus, données PnP vérifiées, hauteur connue) ont l'action `Import` ; les autres sont listées
+   « à la main » et ignorées. Les fiducials du job sont listés dans le log mais **pas** créés automatiquement.
+3. « Generate Board » crée le board, les Packages (nom d'empreinte du job) et les Parts (avec leur hauteur),
+   puis range le job dans `processed/` (ou `failed/` s'il est illisible).
+
+Un job est refusé en entier (et rangé dans `failed/`) s'il contient deux fois la même référence ou s'il est illisible. Le plugin revérifie lui-même que chaque pièce `machine` est complète (vérifiée, hauteur, bande, buse, face dessus) et rétrograde en « à la main » sinon, même si le fichier a été modifié à la main. Quand un job est chargé, le tableau est en lecture seule : l'import vient du job, pas des cellules.
+
+Le format du job est décrit dans `docs/fab_job_format.md` du dépôt kicad_library_manager. La lecture est
+dans `LumenPnP/core/fab_job.py` (Python pur, compatible Jython 2.7, testé avec `python -m pytest`).

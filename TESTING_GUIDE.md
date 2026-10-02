@@ -73,3 +73,15 @@ Une fois le plugin testé et fonctionnel :
 1. Intégrer la logique de calibration
 2. Ajouter la gestion des erreurs
 3. Implémenter les autres fonctionnalités (KiCad, Fast Travel)
+
+## Checklist machine : jobs Fab (à faire devant la machine)
+
+À cocher avant de fusionner un changement qui touche à l'import des jobs :
+
+- [ ] Le dossier des jobs s'affiche et le compteur « n job(s) en attente » est juste.
+- [ ] Un job déposé depuis KiCad déclenche le message « Nouveau job Fab » sous quelques secondes.
+- [ ] « Charger le dernier job » : les pièces `machine` sont en `Import`, les autres en `Ignore`.
+- [ ] « Generate Board » : Packages et Parts créés, hauteur de chaque Part correcte dans l'onglet Parts.
+- [ ] Le job passe dans `processed/` ; un job corrompu donne un message clair et est rangé dans `failed/`.
+- [ ] Les placements du board correspondent à la carte (origine, rotation, face dessus uniquement).
+- [ ] Ajouter les fiducials à la main, puis lancer un placement à blanc **sans pièces** avant tout vrai job.
