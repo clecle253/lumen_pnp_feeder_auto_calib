@@ -396,7 +396,7 @@ class LumenPnPGUI:
                 continue
                 
             if not cmp_id:
-                self.log("Skipping " + str(ref) + " (No CMP_ID)")
+                self.log(u"Skipping " + _to_text(ref) + u" (No CMP_ID)")
                 continue
                 
             # Check if Part exists
@@ -458,7 +458,7 @@ class LumenPnPGUI:
         try:
             # Create Missing Parts & Packages
             for pid in parts_to_create:
-                self.log("Creating Part/Package: " + str(pid))
+                self.log(u"Creating Part/Package: " + _to_text(pid))
                 
                 # A Fab job brings the package id and the height of each part
                 job_part = fab_plan.parts.get(pid) if fab_plan else None
@@ -476,7 +476,7 @@ class LumenPnPGUI:
                 # We need to find the value from one of the items
                 val_desc = next((x['value'] for x in valid_items if x['cmp_id'] == pid), "")
                 if not val_desc and job_part: val_desc = job_part['name']
-                if not val_desc: val_desc = str(pid) # Fallback to ID if no value
+                if not val_desc: val_desc = _to_text(pid) # Fallback to ID if no value
                 
                 # Use Name field for the Description/Value (as requested)
                 new_part.setName(val_desc)
@@ -487,7 +487,7 @@ class LumenPnPGUI:
                         from org.openpnp.model import Length
                         new_part.setHeight(Length(job_part['height_mm'], LengthUnit.Millimeters))
                     except Exception as e:
-                        self.log("WARN: could not set height of " + str(pid) + ": " + str(e))
+                        self.log(u"WARN: could not set height of " + _to_text(pid) + u": " + _to_text(e))
                 
                 config.addPart(new_part)
                 
@@ -531,10 +531,14 @@ class LumenPnPGUI:
                 self.log("WARN: Configuration.getConfigurationDirectory() not found. Falling back to relative path.")
                 pass
             
-            if config_dir:
-                board_file = java.io.File(config_dir, "boards/" + board_name.replace(" ", "_").replace(":", "") + ".board.xml")
-            else:
-                board_file = java.io.File("boards/" + board_name.replace(" ", "_").replace(":", "") + ".board.xml")
+            import re
+            safe_name = re.sub(r"[^\w.-]+", "_", _to_text(board_name), flags=re.UNICODE).strip("._") or "board"
+            boards_dir = java.io.File(config_dir, "boards") if config_dir else java.io.File("boards")
+            board_file = java.io.File(boards_dir, safe_name + ".board.xml")
+            counter = 1
+            while board_file.exists():  # never overwrite the file of an existing board
+                board_file = java.io.File(boards_dir, safe_name + "_" + str(counter) + ".board.xml")
+                counter += 1
             
             # Make sure parent directory exists 
             if not board_file.getParentFile().exists():
@@ -588,7 +592,7 @@ class LumenPnPGUI:
                          self.log("WARN: setSide skipped - enum not found")
                    
                 except Exception as e:
-                    self.log("WARN: Failed to set side for " + item['ref'] + ": " + str(e))
+                    self.log(u"WARN: Failed to set side for " + _to_text(item['ref']) + u": " + _to_text(e))
                 
                 board.addPlacement(pl)
                 count += 1
@@ -596,13 +600,13 @@ class LumenPnPGUI:
             config.addBoard(board)
             config.save()
             
-            self.log("Success! Created Board '" + board_name + "' with " + str(count) + " placements.")
+            self.log(u"Success! Created Board '" + _to_text(board_name) + u"' with " + _to_text(count) + u" placements.")
             if fab_plan:
                 self._finish_fab_job(fab_plan, board_name)
             JOptionPane.showMessageDialog(self.window, "Board Created Successfully!")
             
         except Exception as e:
-            self.log("Error generating board: " + str(e))
+            self.log(u"Error generating board: " + _to_text(e))
             import traceback
             traceback.print_exc()
 
@@ -665,9 +669,14 @@ class LumenPnPGUI:
             with io.open(tmp_file, 'w', encoding='utf-8') as f:
                 for key in sorted(prefs):
                     f.write(key + u"=" + prefs[key] + u"\n")
-            if os.path.exists(prefs_file):
-                os.remove(prefs_file)
-            os.rename(tmp_file, prefs_file)
+            try:
+                from java.nio.file import Files, Paths, StandardCopyOption
+                Files.move(Paths.get(tmp_file), Paths.get(prefs_file),
+                           StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+            except Exception:
+                if os.path.exists(prefs_file):
+                    os.remove(prefs_file)
+                os.rename(tmp_file, prefs_file)
         except Exception as e:
             self.log(u"Error saving paths: " + _to_text(e))
 
@@ -780,8 +789,11 @@ class LumenPnPGUI:
             self.log(u"Job archivé : " + _to_text(archive_job(path)))
         except Exception as e:
             self.log(u"WARN: job non archivé : " + _to_text(e))
+        # The job is done: empty the table so it cannot be imported again or edited into the BOM path
         self.fab_plan = None
         self.fab_job_path = None
+        self.kicad_data = []
+        self.kicad_table_model.setRowCount(0)
         self._refresh_fab_status()
 
     def _create_navigation_tab(self):

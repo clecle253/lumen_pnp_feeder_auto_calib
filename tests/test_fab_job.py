@@ -148,7 +148,7 @@ def test_machine_requirements_from_the_format_doc_are_rechecked(field, value, st
     assert (row["mode"], row["status"], row["action"]) == ("hand", status, "Ignore")
 
 
-def test_created_and_accented_text():
+def test_created_and_accented_text(tmp_path):
     job = make_job()
     job["board"]["name"] = "Carte été"
     job["placements"][0]["value"] = "10kΩ"
@@ -157,9 +157,7 @@ def test_created_and_accented_text():
     assert plan.board_name == "Carte été"
     job["placements"].append(dict(job["placements"][0]))
     with pytest.raises(JobError) as err:
-        validate = fab_job.validate_job(job)
-        assert any("double" in e for e in validate)
-        raise JobError("\n".join(validate))
+        load_job(write(tmp_path, job))
     assert "double" in err.value.text
 
 
