@@ -9,6 +9,8 @@ Nothing here moves the machine or touches the OpenPnP configuration: it turns a
 job file into plain data (rows for the import table, parts to create, a list of
 parts to place by hand) that the GUI then applies.
 """
+from __future__ import unicode_literals
+
 import io
 import json
 import os
@@ -26,7 +28,14 @@ SIDES = ("top", "bottom")
 
 
 class JobError(Exception):
-    """The job file cannot be used; the message says why (shown to the user)."""
+    """The job file cannot be used; the message says why (shown to the user).
+
+    Read it with ``.text``: on Jython 2.7 ``str(error)`` fails on accented text.
+    """
+
+    @property
+    def text(self):
+        return self.args[0] if self.args else ""
 
 
 def _is_text(value):
@@ -121,6 +130,7 @@ class ImportPlan(object):
 
     def __init__(self):
         self.board_name = ""
+        self.created = ""
         self.thickness_mm = None
         self.origin = ""
         self.rows = []        # one dict per placement, shaped like the BOM/.pos importer's rows
@@ -147,7 +157,9 @@ def _part_info(cmp_id, entry, fallback_value):
         "tape_width_mm": _number(pnp.get("tape_width_mm")),
         "tape_pitch_mm": _number(pnp.get("tape_pitch_mm")),
         "rotation_in_tape_deg": _number(pnp.get("rotation_in_tape_deg")) or 0.0,
-        "verified": pnp.get("verified") is not False,
+        # Only an explicit true counts; the KiCad side always writes the key.
+        "verified": pnp.get("verified") is True,
+        "placeable": _clean(pnp.get("placeable")) or "machine",
     }
 
 
@@ -162,6 +174,7 @@ def plan_import(job):
     plan = ImportPlan()
     board = job.get("board") or {}
     plan.board_name = _clean(board.get("name")) or "Imported Board"
+    plan.created = _clean(job.get("created"))
     plan.thickness_mm = _number(board.get("thickness_mm"))
     plan.origin = _clean(board.get("origin"))
     if plan.origin == "page_origin":
@@ -179,19 +192,27 @@ def plan_import(job):
         cmp_id = _clean(p.get("cmp_id"))
         mode = p["mode"]
         status = "OK"
-        if mode == "machine":
+        if p.get("dnp") is True:
+            mode, status = "skip", "DNP"
+        elif mode == "machine":
             info = plan.parts.get(cmp_id)
+            part_entry = parts.get(cmp_id)
             if not cmp_id:
                 mode, status = "hand", "MISSING_ID"
+            elif not isinstance(part_entry, dict) or not isinstance(part_entry.get("pnp"), dict):
+                mode, status = "hand", "NO_PNP"
             else:
                 if info is None:
-                    info = _part_info(cmp_id, parts.get(cmp_id), _clean(p.get("value")))
-                if not isinstance(parts.get(cmp_id), dict) or not isinstance(parts[cmp_id].get("pnp"), dict):
-                    mode, status = "hand", "NO_PNP"
+                    info = _part_info(cmp_id, part_entry, _clean(p.get("value")))
+                if info["placeable"] != "machine":
+                    mode, status = "hand", "NOT_PLACEABLE"
                 elif not info["verified"]:
                     mode, status = "hand", "UNVERIFIED"
                 elif info["height_mm"] is None:
                     mode, status = "hand", "NO_HEIGHT"
+                elif not (info["tape_type"] and info["tape_width_mm"] and info["tape_pitch_mm"]
+                          and info["nozzle_tips"]):
+                    mode, status = "hand", "NO_TAPE"
                 elif p["side"] == "bottom":
                     mode, status = "hand", "BOTTOM_SIDE"
                 else:
@@ -278,7 +299,7 @@ class JobWatcher(object):
                     new.append(path)
             self._seen = current
             self._announced &= set(current)
+            new.sort(key=lambda p: (current[p][1], p))
         except OSError:
             return []
-        new.sort(key=lambda p: (os.path.getmtime(p) if os.path.exists(p) else 0, p))
         return new

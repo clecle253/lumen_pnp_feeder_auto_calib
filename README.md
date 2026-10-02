@@ -62,5 +62,7 @@ Le bouton **Fab** de [kicad_library_manager](https://github.com/clecle253/kicad_
 3. « Generate Board » crée le board, les Packages (nom d'empreinte du job) et les Parts (avec leur hauteur),
    puis range le job dans `processed/` (ou `failed/` s'il est illisible).
 
+Un job est refusé en entier (et rangé dans `failed/`) s'il contient deux fois la même référence ou s'il est illisible. Le plugin revérifie lui-même que chaque pièce `machine` est complète (vérifiée, hauteur, bande, buse, face dessus) et rétrograde en « à la main » sinon, même si le fichier a été modifié à la main. Quand un job est chargé, le tableau est en lecture seule : l'import vient du job, pas des cellules.
+
 Le format du job est décrit dans `docs/fab_job_format.md` du dépôt kicad_library_manager. La lecture est
 dans `LumenPnP/core/fab_job.py` (Python pur, compatible Jython 2.7, testé avec `python -m pytest`).

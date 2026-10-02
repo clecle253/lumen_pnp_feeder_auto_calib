@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import copy
 import json
 import os
@@ -115,10 +116,51 @@ def test_machine_parts_are_downgraded_to_hand_when_data_is_not_trustworthy(mutat
     assert plan.parts == {}
 
 
-def test_hand_edited_job_with_missing_verified_key_is_trusted_only_if_not_false():
+@pytest.mark.parametrize("value", [None, "true", "false", 0, 1, "yes"])
+def test_only_an_explicit_true_counts_as_verified(value):
     job = make_job()
+    job["parts"]["CMP_R"]["pnp"]["verified"] = value
+    assert [r["status"] for r in plan_import(job).rows if r["ref"] == "R10"] == ["UNVERIFIED"]
     del job["parts"]["CMP_R"]["pnp"]["verified"]
-    assert [r["status"] for r in plan_import(job).rows if r["ref"] == "R10"] == ["OK"]
+    assert [r["status"] for r in plan_import(job).rows if r["ref"] == "R10"] == ["UNVERIFIED"]
+
+
+def test_dnp_is_skipped_even_when_marked_machine():
+    job = make_job()
+    job["placements"][0]["dnp"] = True
+    row = [r for r in plan_import(job).rows if r["ref"] == "R10"][0]
+    assert (row["mode"], row["status"], row["action"]) == ("skip", "DNP", "Ignore")
+    assert "R10" not in plan_import(job).hand
+
+
+@pytest.mark.parametrize("field,value,status", [
+    ("placeable", "hand", "NOT_PLACEABLE"),
+    ("placeable", "skip", "NOT_PLACEABLE"),
+    ("tape_type", "", "NO_TAPE"),
+    ("tape_width_mm", None, "NO_TAPE"),
+    ("tape_pitch_mm", 0, "NO_TAPE"),
+    ("nozzle_tips", [], "NO_TAPE"),
+])
+def test_machine_requirements_from_the_format_doc_are_rechecked(field, value, status):
+    job = make_job()
+    job["parts"]["CMP_R"]["pnp"][field] = value
+    row = [r for r in plan_import(job).rows if r["ref"] == "R10"][0]
+    assert (row["mode"], row["status"], row["action"]) == ("hand", status, "Ignore")
+
+
+def test_created_and_accented_text():
+    job = make_job()
+    job["board"]["name"] = "Carte été"
+    job["placements"][0]["value"] = "10kΩ"
+    plan = plan_import(job)
+    assert plan.created == "2026-10-02T11:30:00+02:00"
+    assert plan.board_name == "Carte été"
+    job["placements"].append(dict(job["placements"][0]))
+    with pytest.raises(JobError) as err:
+        validate = fab_job.validate_job(job)
+        assert any("double" in e for e in validate)
+        raise JobError("\n".join(validate))
+    assert "double" in err.value.text
 
 
 def test_plan_warnings():

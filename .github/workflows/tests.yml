@@ -14,3 +14,15 @@ jobs:
           python-version: "3.11"
       - run: pip install pytest
       - run: python -m pytest -q
+
+  jython:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Download Jython 2.7 (the interpreter OpenPnP scripts run on)
+        run: curl -sSfL -o jython.jar https://repo1.maven.org/maven2/org/python/jython-standalone/2.7.3/jython-standalone-2.7.3.jar
+      - run: java -jar jython.jar tests/jython_smoke.py

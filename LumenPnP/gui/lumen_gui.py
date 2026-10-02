@@ -16,6 +16,22 @@ else:
     USE_SWING = False
 
 
+def _to_text(message):
+    """Text for logs: Jython 2.7 mixes byte str and unicode, and str() of accented unicode fails."""
+    try:
+        text_type = unicode  # noqa: F821  (Jython 2.7)
+    except NameError:
+        text_type = str
+    if isinstance(message, text_type):
+        return message
+    if isinstance(message, bytes):
+        return message.decode("utf-8", "replace")
+    try:
+        return text_type(message)
+    except Exception:
+        return repr(message)
+
+
 class LumenPnPGUI:
     """Main GUI window for LumenPnP plugin"""
     
@@ -219,7 +235,14 @@ class LumenPnPGUI:
         # -- CENTER PANEL: Validation Table --
         # Columns: Ref, CMP_ID, Value, Side, Status, Action
         self.kicad_cols = ["Ref", "CMP_ID", "Value", "Side", "Status", "Action"]
-        self.kicad_table_model = DefaultTableModel(self.kicad_cols, 0)
+        gui = self
+
+        class KicadTableModel(DefaultTableModel):
+            def isCellEditable(m_self, row, col):
+                # A Fab job is display-only: what gets imported comes from the job itself
+                return getattr(gui, 'fab_plan', None) is None
+
+        self.kicad_table_model = KicadTableModel(self.kicad_cols, 0)
         self.kicad_table = JTable(self.kicad_table_model)
         
         # Scroll pane
@@ -351,6 +374,16 @@ class LumenPnPGUI:
         
         valid_items = []
         parts_to_create = set()
+        fab_plan = getattr(self, 'fab_plan', None)
+        
+        if fab_plan:
+            # Only the parts the job marks for the machine, with the job's own data (never the table cells)
+            rows = 0
+            for r in fab_plan.machine_rows():
+                valid_items.append({"ref": r['ref'], "cmp_id": r['cmp_id'], "x": r['x'], "y": r['y'],
+                                    "rot": r['rot'], "side": r['side'], "value": r['value']})
+                if not Configuration.get().getPart(r['cmp_id']):
+                    parts_to_create.add(r['cmp_id'])
         
         for i in range(rows):
             # Columns: Ref, CMP_ID, Value, Side, Status, Action
@@ -393,7 +426,6 @@ class LumenPnPGUI:
         import os
         bom_path = self.txt_bom.getText()
         default_name = os.path.splitext(os.path.basename(bom_path))[0] if bom_path else "Imported Board"
-        fab_plan = getattr(self, 'fab_plan', None)
         if fab_plan:
             default_name = fab_plan.board_name
         
@@ -459,6 +491,30 @@ class LumenPnPGUI:
                 
                 config.addPart(new_part)
                 
+            # Parts that already exist (e.g. from an earlier BOM import): complete a missing height,
+            # warn about anything else that differs from the job. Nothing is overwritten.
+            if fab_plan:
+                for pid, job_part in fab_plan.parts.items():
+                    if pid in parts_to_create:
+                        continue
+                    existing = config.getPart(pid)
+                    try:
+                        from org.openpnp.model import Length
+                        current = existing.getHeight()
+                        current_mm = current.convertToUnits(LengthUnit.Millimeters).getValue() if current else 0.0
+                        if job_part['height_mm'] and current_mm <= 0.0:
+                            existing.setHeight(Length(job_part['height_mm'], LengthUnit.Millimeters))
+                            self.log(u"Hauteur de " + _to_text(pid) + u" absente : mise à " + _to_text(job_part['height_mm']) + u" mm d'après le job.")
+                        elif job_part['height_mm'] and abs(current_mm - job_part['height_mm']) > 0.001:
+                            self.log(u"ATTENTION : " + _to_text(pid) + u" a une hauteur de " + _to_text(current_mm)
+                                     + u" mm dans OpenPnP, le job dit " + _to_text(job_part['height_mm']) + u" mm (non modifiée).")
+                        pkg_now = existing.getPackage()
+                        if pkg_now is not None and pkg_now.getId() != job_part['package']:
+                            self.log(u"ATTENTION : " + _to_text(pid) + u" utilise le package " + _to_text(pkg_now.getId())
+                                     + u", le job dit " + _to_text(job_part['package']) + u" (non modifié).")
+                    except Exception as e:
+                        self.log(u"WARN: pièce existante " + _to_text(pid) + u" non comparée au job : " + _to_text(e))
+
             # Create Board
             import java.io.File
             board = Board()
@@ -560,26 +616,32 @@ class LumenPnPGUI:
         return 0
 
     
-    def _load_kicad_paths(self):
-        """Load last used paths from file"""
+    def _prefs_path(self):
         import os
         from org.openpnp.model import Configuration
-        
         config_dir = Configuration.get().getConfigurationDirectory().getAbsolutePath()
-        prefs_file = os.path.join(config_dir, "lumenpnp_kicad.properties")
+        return os.path.join(config_dir, "lumenpnp_kicad.properties")
+
+    def _load_kicad_paths(self):
+        """Load last used paths from file (None when there is no file or it cannot be read)"""
+        import io
+        import os
+        prefs_file = self._prefs_path()
         
         if not os.path.exists(prefs_file):
             return None
             
         paths = {}
         try:
-            with open(prefs_file, 'r') as f:
+            with io.open(prefs_file, 'r', encoding='utf-8') as f:
                 for line in f:
-                    if '=' in line:
-                        key, val = line.strip().split('=', 1)
+                    if u'=' in line:
+                        key, val = line.rstrip(u"\r\n").split(u'=', 1)
                         paths[key] = val
             return paths
-        except:
+        except Exception as e:
+            self.log(u"WARN: préférences illisibles (" + _to_text(e) + u"), elles ne seront pas réécrites.")
+            self._prefs_unreadable = True
             return None
 
     def _save_kicad_paths(self, bom, top, bot):
@@ -588,22 +650,30 @@ class LumenPnPGUI:
 
     def _save_prefs(self, **changes):
         """Merge changes into the properties file (keys we do not touch are kept)"""
+        import io
         import os
-        from org.openpnp.model import Configuration
+        prefs_file = self._prefs_path()
         
-        config_dir = Configuration.get().getConfigurationDirectory().getAbsolutePath()
-        prefs_file = os.path.join(config_dir, "lumenpnp_kicad.properties")
-        
+        self._prefs_unreadable = False
         prefs = self._load_kicad_paths() or {}
-        prefs.update(changes)
+        if self._prefs_unreadable:
+            return
+        for key, value in changes.items():
+            prefs[_to_text(key)] = _to_text(value)
+        tmp_file = prefs_file + ".tmp"
         try:
-            with open(prefs_file, 'w') as f:
+            with io.open(tmp_file, 'w', encoding='utf-8') as f:
                 for key in sorted(prefs):
-                    f.write(key + "=" + prefs[key] + "\n")
+                    f.write(key + u"=" + prefs[key] + u"\n")
+            if os.path.exists(prefs_file):
+                os.remove(prefs_file)
+            os.rename(tmp_file, prefs_file)
         except Exception as e:
-            self.log("Error saving paths: " + str(e))
+            self.log(u"Error saving paths: " + _to_text(e))
 
     # ---- Fab jobs (written by the KiCad "Fab" button) ----
+    # Literals are u"" on purpose: refs, paths and board names coming from the job are unicode on
+    # Jython 2.7 and mixing them with accented byte strings raises UnicodeDecodeError.
 
     def _on_fab_dir_changed(self):
         folder = self.txt_fab_dir.getText().strip()
@@ -617,11 +687,11 @@ class LumenPnPGUI:
         from LumenPnP.core.fab_job import list_pending_jobs
         folder = self.txt_fab_dir.getText().strip()
         if not folder:
-            text = "Aucun dossier choisi"
+            text = u"Aucun dossier choisi"
         elif not os.path.isdir(folder):
-            text = "Dossier introuvable : " + folder
+            text = u"Dossier introuvable : " + _to_text(folder)
         else:
-            text = str(len(list_pending_jobs(folder))) + " job(s) en attente"
+            text = _to_text(len(list_pending_jobs(folder))) + u" job(s) en attente"
         self.lbl_fab_status.setText(text)
 
     def _start_fab_watcher(self):
@@ -630,6 +700,9 @@ class LumenPnPGUI:
         import time
         from LumenPnP.core.fab_job import JobWatcher
         
+        if getattr(self, '_fab_watcher_started', False):
+            return
+        self._fab_watcher_started = True
         self.fab_watcher = JobWatcher(self.txt_fab_dir.getText().strip())
         self._refresh_fab_status()
         
@@ -640,10 +713,10 @@ class LumenPnPGUI:
                     if self.window is not None and not self.window.isDisplayable():
                         return
                     for path in self.fab_watcher.poll():
-                        self.log("Nouveau job Fab : " + path + " (bouton 'Charger le dernier job')")
+                        self.log(u"Nouveau job Fab : " + _to_text(path) + u" (bouton 'Charger le dernier job')")
                         self._refresh_fab_status()
                 except Exception as e:
-                    print("Fab watcher error: " + str(e))
+                    print("Fab watcher error: " + repr(e))
         
         t = threading.Thread(target=poll_loop)
         t.daemon = True
@@ -651,24 +724,27 @@ class LumenPnPGUI:
 
     def _load_fab_job(self):
         """Read the newest pending job and show it in the validation table"""
-        from LumenPnP.core.fab_job import JobError, list_pending_jobs, load_job, plan_import
+        import os
+        from LumenPnP.core.fab_job import JobError, archive_job, list_pending_jobs, load_job, plan_import
         
         folder = self.txt_fab_dir.getText().strip()
         self._save_prefs(fabdir=folder)
+        if hasattr(self, 'fab_watcher'):
+            self.fab_watcher.set_dir(folder)  # a folder typed by hand is watched too
         pending = list_pending_jobs(folder)
         if not pending:
-            self.log("Aucun job Fab en attente dans : " + folder)
+            self.log(u"Aucun job Fab en attente dans : " + _to_text(folder))
             return
         path = pending[-1]
         try:
             job = load_job(path)
-        except JobError as e:
-            self.log("Job refusé (" + path + ") : " + str(e))
+        except Exception as e:
+            reason = e.text if isinstance(e, JobError) else _to_text(e)
+            self.log(u"Job refusé (" + _to_text(path) + u") : " + reason)
             try:
-                from LumenPnP.core.fab_job import archive_job
-                self.log("Rangé dans : " + archive_job(path, ok=False))
+                self.log(u"Rangé dans : " + _to_text(archive_job(path, ok=False)))
             except Exception as move_error:
-                self.log("WARN: job refusé non déplacé : " + str(move_error))
+                self.log(u"WARN: job refusé non déplacé : " + _to_text(move_error))
             self._refresh_fab_status()
             return
         
@@ -678,17 +754,21 @@ class LumenPnPGUI:
         self.kicad_data = plan.rows
         self._fill_kicad_table()
         
-        self.log("Job chargé : " + plan.board_name + " - " + str(len(plan.machine_rows())) + " pour la machine, "
-                 + str(len(plan.hand)) + " à la main.")
+        self.log(u"Job chargé : " + _to_text(plan.board_name) + u" (" + _to_text(os.path.basename(path))
+                 + u", créé le " + _to_text(plan.created or u"?") + u") - "
+                 + _to_text(len(plan.machine_rows())) + u" pour la machine, " + _to_text(len(plan.hand)) + u" à la main.")
         for w in plan.warnings:
-            self.log("ATTENTION : " + w)
+            self.log(u"ATTENTION : " + _to_text(w))
         if plan.hand:
-            self.log("A poser à la main : " + ", ".join(plan.hand))
+            self.log(u"A poser à la main : " + u", ".join(_to_text(r) for r in plan.hand))
         if plan.fiducials:
-            self.log("Fiducials du job (non créés automatiquement) : "
-                     + ", ".join(f['ref'] + " (" + str(f['x']) + ", " + str(f['y']) + ")" for f in plan.fiducials))
+            self.log(u"Fiducials du job (non créés automatiquement) : "
+                     + u", ".join(_to_text(f['ref']) + u" (" + _to_text(f['x']) + u", " + _to_text(f['y']) + u")"
+                                  for f in plan.fiducials))
         if len(pending) > 1:
-            self.log(str(len(pending) - 1) + " autre(s) job(s) plus ancien(s) restent en attente.")
+            self.log(u"ATTENTION : " + _to_text(len(pending) - 1) + u" job(s) plus ancien(s) restent en attente ("
+                     + u", ".join(_to_text(os.path.basename(p)) for p in pending[:-1])
+                     + u"). Vérifiez que celui-ci est bien le bon.")
 
     def _finish_fab_job(self, plan, board_name):
         """Move the job file to processed/ once its board exists"""
@@ -697,9 +777,9 @@ class LumenPnPGUI:
         if not path:
             return
         try:
-            self.log("Job archivé : " + archive_job(path))
+            self.log(u"Job archivé : " + _to_text(archive_job(path)))
         except Exception as e:
-            self.log("WARN: job not archived: " + str(e))
+            self.log(u"WARN: job non archivé : " + _to_text(e))
         self.fab_plan = None
         self.fab_job_path = None
         self._refresh_fab_status()
@@ -1512,7 +1592,11 @@ class LumenPnPGUI:
 
     def log(self, message):
         """Add message to log panel"""
-        print(message) # Always print to console
+        message = _to_text(message)
+        try:
+            print(message.encode("utf-8") if bytes is str else message) # Always print to console
+        except Exception:
+            pass
         if hasattr(self, 'log_area'):
             from javax.swing import SwingUtilities
             from java.lang import Runnable
@@ -1520,7 +1604,7 @@ class LumenPnPGUI:
             # Thread-safe GUI update
             class LogRunnable(Runnable):
                 def run(r_self):
-                    self.log_area.append(str(message) + "\n")
+                    self.log_area.append(message + u"\n")
                     self.log_area.setCaretPosition(self.log_area.getDocument().getLength())
             
             SwingUtilities.invokeLater(LogRunnable())
